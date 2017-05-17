@@ -105,17 +105,17 @@ subroutine recell(p)
   bet_deg = p%param(5)
   gam_deg = p%param(6)
 
-  if (p%param(4) .eq. 90.0) then
+  if (p%param(4)-90.0_double < small) then
     cosa=0.0
   else
     cosa = cos(alp_deg*deg2rad)
-  endif 
-  if (p%param(5) .eq. 90.0) then
+  endif
+  if (p%param(5)-90.0_double < small) then
     cosb = 0.0
   else
     cosb = cos(bet_deg*deg2rad)
   endif
-  if (p%param(6) .eq. 90.0) then
+  if (p%param(6)-90.0_double < small) then
     cosg = 0.0
     sing = 1.0
   else
@@ -258,7 +258,7 @@ function cart2frac(p,v) result(w)
 
 end function cart2frac
 
-! Minimum image convention periodic boundary conditions 
+! Minimum image convention periodic boundary conditions
 ! (only works for orthorhombic cells)
 subroutine mic(p, coord1, coord2, relative)
 
@@ -342,9 +342,9 @@ subroutine read_cell(p, infilename)
 
   class(type_cell), intent(inout)   :: p
 
-  character(40)                       :: infilename, junk
+  character(40)                       :: infilename
   character(80)                       :: line
-  integer                             :: i, j, nspecies, reason
+  integer                             :: i, reason
 
   infilename = trim(infilename)
 
@@ -407,7 +407,7 @@ subroutine read_poscar(p, infilename, nspec)
 
   character(40)                       :: infilename, junk
   integer                             :: i, j, acount, nspec
-  real(double)                        :: volume, energy, sfac
+  real(double)                        :: sfac
 
   infilename = trim(infilename)
   p%nspec = nspec
@@ -485,8 +485,7 @@ subroutine read_xsf(p, infilename)
   class(type_cell), intent(inout)   :: p
 
   character(40)                       :: junk, infilename, testfile
-  integer                             :: i, j, nspec, junkint
-  real(double)                        :: volume, energy, sfac
+  integer                             :: i, nspec, junkint
 
   testfile = 'test.res'
   infilename = trim(infilename)
@@ -543,7 +542,7 @@ subroutine write_poscar(p, filename)
   class(type_cell), intent(inout)   :: p
 
   character(40)                       :: filename
-  integer                             :: i, j
+  integer                             :: i
 
   open(101, file=filename, status='replace')
   write(101,*) filename
@@ -566,7 +565,7 @@ subroutine write_cell(p, filename)
   class(type_cell), intent(inout)   :: p
 
   character(40)                       :: filename
-  integer                             :: i, j
+  integer                             :: i
 
   open(101, file=filename, status='replace')
   write(101,*) "%BLOCK lattice_abc"
