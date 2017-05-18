@@ -8,21 +8,21 @@ module vector
   contains
 
   ! Calculate length of a three vector
-  subroutine modulus(vector, l)
+  function modulus(vector) result(l)
     real(double), dimension(3)  :: vector
     real(double)                :: l
 
     l = sqrt(sum(vector**2))
-  end subroutine modulus
+  end function modulus
 
   ! Normalise a vector
-  subroutine norm(vector, n)
+  function norm(vector) result(n)
     real(double), dimension(3)  :: vector, n
     real(double)                :: l
 
-    call modulus(vector, l)
+    l = modulus(vector)
     n = vector / l
-  end subroutine norm
+  end function norm
 
   ! Cross product
   subroutine cross_product(u, v, cross)

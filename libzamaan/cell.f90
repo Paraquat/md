@@ -30,6 +30,7 @@ type type_cell
     procedure :: cart2frac
     procedure :: mic
     procedure :: init
+    procedure :: get_dt
     procedure :: read_xyz
     procedure :: read_shx
     procedure :: read_cell
@@ -282,15 +283,39 @@ subroutine init(p, nat, nspec, h, r, species)
   character(2), dimension(:), intent(in)  :: species
   integer, intent(in)                     :: nat, nspec
 
+  p%nat = nat
+  p%nspec = nspec
+  allocate(p%r(nat,3),p%species(nat))
   p%r = r
   p%h = h
   p%species = species
-  p%nat = nat
-  p%nspec = nspec
 
   call p%count_species()
 
 end subroutine init
+
+! get the distance table
+subroutine get_dt(p)
+
+  class(type_cell), intent(inout)     :: p
+
+  integer                                 :: iat, jat
+  real(double), dimension(3)              :: r_ij, r_ij_cart
+  real(double)                            :: d
+
+  p%dt=0.
+
+  do iat=1,p%nat
+    do jat=iat+1,p%nat
+      r_ij=p%r(jat,:)-p%r(iat,:)
+      r_ij_cart=p%disp_frac2cart(r_ij)
+      d=sqrt(sum(r_ij_cart**2))
+      p%dt(iat,jat)=d
+      p%dt(jat,iat)=d
+    end do
+  end do
+
+end subroutine get_dt
 
 ! read xyz file (cell parameters in the comment line)
 subroutine read_xyz(p, infilename)

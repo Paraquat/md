@@ -149,29 +149,6 @@ subroutine get_trans(pd)
 
 end subroutine get_trans
 
-! Construct distance table
-subroutine get_dt(pd)
-
-  class(type_pairdist), intent(inout)     :: pd
-
-  integer                                 :: iat, jat
-  real(double), dimension(3)              :: diff, diff_cart
-  real(double)                            :: d
-
-  pd%dt=0.
-
-  do iat=1,pd%p%nat
-    do jat=iat+1,pd%p%nat
-      diff=pd%p%r(iat,:)-pd%p%r(jat,:)
-      diff_cart=pd%p%disp_frac2cart(diff)
-      d=sqrt(sum(diff_cart**2))
-      pd%dt(iat,jat)=d
-      pd%dt(jat,iat)=d
-    end do
-  end do
-
-end subroutine get_dt
-
 ! Update the pair distribution from current configuration in the cell pd%p
 subroutine update_rdist(pd)
 
@@ -216,10 +193,10 @@ subroutine update_rdist_dt(pd)
   ! bin atomic separations
   do iat=1,pd%p%nat
     do jat=1,pd%p%nat
-      if (pd%dt(iat,jat) .lt. pd%cut .and. pd%dt(iat,jat) .gt. small) then
+      if (pd%p%dt(iat,jat) .lt. pd%cut .and. pd%p%dt(iat,jat) .gt. small) then
         if (pd%p%species(iat) .ne. pd%ignorespec .and. pd%p%species(jat) .ne. pd%ignorespec) then
   !        ig = int(pd%dt(iat,jat)/pd%delr)
-          ig = int((pd%dt(iat,jat)+pd%delr)/pd%delr)
+          ig = int((pd%p%dt(iat,jat)+pd%delr)/pd%delr)
           pd%total(ig) = pd%total(ig)+1
           do ispec=1,pd%p%nspec
             do jspec=ispec,pd%p%nspec
@@ -236,7 +213,7 @@ subroutine update_rdist_dt(pd)
 
 end subroutine update_rdist_dt
 
-! Use distance table to get list of neighbours of atom centreid with a 
+! Use distance table to get list of neighbours of atom centreid with a
 ! given radius
 subroutine get_neighbours_dt(pd, centreid, radius, nneigh, nlist)
 

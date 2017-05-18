@@ -5,12 +5,12 @@ module constants
   implicit none
   save
 
-  real(double), parameter     :: pi = 3.14159265359
-  real(double), parameter     :: rad2deg = 57.29577951
-  real(double), parameter     :: deg2rad = 1/rad2deg
-  real(double), parameter     :: small = 1.0E-8_double
   real(double), parameter     :: zero = 0.0_double
   real(double), parameter     :: one = 1.0_double
   real(double), parameter     :: two = 2.0_double
-  
+  real(double), parameter     :: pi = 3.14159265359_double
+  real(double), parameter     :: rad2deg = 57.29577951_double
+  real(double), parameter     :: deg2rad = one/rad2deg
+  real(double), parameter     :: small = 1.0E-8_double
+
 end module constants
