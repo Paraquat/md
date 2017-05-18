@@ -42,7 +42,6 @@ type type_pairdist
     procedure :: init_pd
     procedure :: reset_pd
     procedure :: get_trans
-    procedure :: get_dt
     procedure :: update_rdist
     procedure :: update_rdist_dt
     procedure :: get_neighbours_dt

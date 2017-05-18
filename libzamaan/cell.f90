@@ -14,12 +14,13 @@ type type_cell
 
   real(double), allocatable, dimension(:,:) :: r, rcart, dt
   character(2), allocatable, dimension(:)   :: spec, species
-  integer, allocatable, dimension(:)        :: spec_count
+  integer, allocatable, dimension(:)        :: spec_count, spec_int
   real(double), dimension(3,3)              :: h, h_inv
   real(double), dimension(6)                :: param
 
   contains
     procedure :: count_species
+    procedure :: int_label_species
     procedure :: recell
     procedure :: uncell
     procedure :: volume
@@ -89,6 +90,25 @@ subroutine count_species(p)
   end do
 
 end subroutine count_species
+
+! Give species integer label
+subroutine int_label_species(p)
+
+  class(type_cell), intent(inout)   :: p
+
+  integer                           :: i, j
+
+  allocate(p%spec_int(p%nat))
+
+  do i=1,p%nat
+    do j=1,p%nspec
+      if (p%species(i) == p%spec(j)) then
+        p%spec_int(i) = j
+      end if
+    end do
+  end do
+
+end subroutine int_label_species
 
 ! calculate lattice vectors from cell parameters
 subroutine recell(p)
@@ -291,6 +311,7 @@ subroutine init(p, nat, nspec, h, r, species)
   p%species = species
 
   call p%count_species()
+  call p%int_label_species()
 
 end subroutine init
 
@@ -423,6 +444,9 @@ subroutine read_cell(p, infilename)
     end if
   end do outer2
   close(101)
+
+  call p%count_species()
+  call p%int_label_species()
 end subroutine read_cell
 
 ! read vasp poscar file

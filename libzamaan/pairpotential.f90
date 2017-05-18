@@ -10,13 +10,15 @@ private
 public :: type_pp
 
 type type_pp
-  integer       :: nspec
+  integer       :: ns
   real(double), allocatable, dimension(:,:)  :: r_cut
+  character(2), allocatable, dimension(:)    :: species_label
   real(double), allocatable, dimension(:,:)  :: sigma
   real(double), allocatable, dimension(:,:)  :: epsilon
   real(double), allocatable, dimension(:,:)  :: f_shift, e_shift
   real(double), allocatable, dimension(:,:)  :: s6,s12,c_f,c_e
   contains
+    procedure :: init_pp_from_file
     procedure :: init_pp
     procedure :: lj_energy
     procedure :: lj_force
@@ -24,11 +26,51 @@ end type type_pp
 
 contains
 
-  subroutine init_pp(pp, nspec, sigma, epsilon, r_cut, shift)
+  subroutine init_pp_from_file(pp, filename, shift)
 
     class(type_pp), intent(inout) :: pp
 
-    integer, intent(in)           :: nspec
+    character(40), intent(in)     :: filename
+    logical, intent(in)           :: shift
+
+    integer                       :: funit, ios, i, ns
+    character(80)                 :: junk
+    real(double), allocatable, dimension(:,:) :: sigma, epsilon, r_cut
+
+    funit = 11
+
+    open(funit, file=filename, iostat=ios)
+    read(funit,*) ns
+    read(funit,*) pp%species_label
+
+    allocate(sigma(ns,ns), epsilon(ns,ns), r_cut(ns,ns))
+
+    read(funit,*) junk
+    do i=1,ns
+      read(funit,*) r_cut(i,:)
+    end do
+
+    read(funit,*) junk
+    do i=1,ns
+      read(funit,*) epsilon(i,:)
+    end do
+
+    read(funit,*) junk
+    do i=1,ns
+      read(funit,*) sigma(i,:)
+    end do
+
+    close(funit)
+
+    call pp%init_pp(ns, sigma, epsilon, r_cut, shift)
+
+  end subroutine init_pp_from_file
+
+  subroutine init_pp(pp, ns, sigma, epsilon, r_cut, shift)
+
+    class(type_pp), intent(inout) :: pp
+
+    integer, intent(in)           :: ns
     real(double), dimension(:,:), intent(in)  :: r_cut
     real(double), dimension(:,:), intent(in)  :: sigma
     real(double), dimension(:,:), intent(in)  :: epsilon
@@ -36,22 +78,22 @@ contains
 
     integer                       :: i,j
 
-    allocate(pp%sigma(nspec,nspec),pp%s6(nspec,nspec), &
-             pp%s12(nspec,nspec), pp%c_f(nspec,nspec), &
-             pp%c_e(nspec,nspec), pp%f_shift(nspec,nspec), &
-             pp%e_shift(nspec,nspec))
+    allocate(pp%sigma(ns,ns),pp%s6(ns,ns), pp%s12(ns,ns), pp%c_f(ns,ns), &
+             pp%c_e(ns,ns), pp%f_shift(ns,ns), pp%e_shift(ns,ns), &
+             pp%species_label(ns), pp%r_cut(ns,ns))
     pp%sigma = sigma
     pp%epsilon = epsilon
     pp%s6 = sigma**6
     pp%s12 = sigma**12
     pp%c_f = 24.0_double*epsilon
     pp%c_e = 4.0_double*epsilon
+    pp%r_cut = r_cut
+
     pp%e_shift = zero
     pp%f_shift = zero
 
     ! Compute the force and energy shift
     if (shift .eqv. .true.) then
-      pp%r_cut = r_cut
       do i=1,3
         do j=1,3
           pp%e_shift(i,j) = pp%lj_energy(pp%r_cut(i,j), i, j, .false.)
