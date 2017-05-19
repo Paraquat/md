@@ -26,6 +26,16 @@ end type type_pp
 
 contains
 
+  ! Read a pp file and initialise
+  ! Format:
+  ! 1 number of atoms
+  ! 2 list of species
+  ! 3 Comment (# Cutoff)
+  ! 4 r_cut matrix
+  ! 5 Comment (# Epsilon)
+  ! 6 epsilon matrix
+  ! 7 Comment (# Sigma)
+  ! 8 sigma matrix
   subroutine init_pp_from_file(pp, filename, shift)
 
     class(type_pp), intent(inout) :: pp
@@ -79,8 +89,7 @@ contains
     integer                       :: i,j
 
     allocate(pp%sigma(ns,ns),pp%s6(ns,ns), pp%s12(ns,ns), pp%c_f(ns,ns), &
-             pp%c_e(ns,ns), pp%f_shift(ns,ns), pp%e_shift(ns,ns), &
-             pp%species_label(ns), pp%r_cut(ns,ns))
+             pp%c_e(ns,ns), pp%species_label(ns), pp%r_cut(ns,ns))
     pp%sigma = sigma
     pp%epsilon = epsilon
     pp%s6 = sigma**6
@@ -89,13 +98,14 @@ contains
     pp%c_e = 4.0_double*epsilon
     pp%r_cut = r_cut
 
-    pp%e_shift = zero
-    pp%f_shift = zero
-
-    ! Compute the force and energy shift
+    ! If the potential is truncated there is a discontinuity at r_cut.
+    ! Avoid by shifting the energy/force by adding U(r_cut) or F(r_cut)
     if (shift .eqv. .true.) then
-      do i=1,3
-        do j=1,3
+      allocate(pp%e_shift(ns,ns), pp%f_shift(ns,ns))
+      pp%e_shift = zero
+      pp%f_shift = zero
+      do i=1,ns
+        do j=1,ns
           pp%e_shift(i,j) = pp%lj_energy(pp%r_cut(i,j), i, j, .false.)
           pp%f_shift(i,j) = pp%lj_force(pp%r_cut(i,j), i, j, .false.)
         end do
@@ -103,6 +113,8 @@ contains
     end if
   end subroutine init_pp
 
+  ! Lennard-Jones energy
+  ! U = 4*epsil*((sigma/r)^12 - (sigma/r)^6)
   function lj_energy(pp, r_ij, s_i, s_j, shift) result(e)
 
     ! passed variables
@@ -121,11 +133,13 @@ contains
 
     e = pp%c_e(s_i,s_j)*(pp%s12(s_i,s_j)*inv_r12-pp%s6(s_i,s_j)*inv_r6)
     if (shift .eqv. .true.) then
-        e = e + pp%e_shift(s_i,s_j)
+        e = e - pp%e_shift(s_i,s_j)
     end if
 
   end function lj_energy
 
+! Lennard-Jones force (derivative of energy)
+! U = 24*epsil/sigma*(2*(sigma/r)^13 - (sigma/r)^7)
   function lj_force(pp, r_ij, s_i, s_j, shift) result(f)
 
     ! passed variables
@@ -144,7 +158,7 @@ contains
 
     f = pp%c_f(s_i,s_j)*(2*pp%s12(s_i,s_j)*inv_r13-pp%s6(s_i,s_j)*inv_r7)
     if (shift .eqv. .true.) then
-      f = f + pp%f_shift(s_i,s_j)
+      f = f - pp%f_shift(s_i,s_j)
     end if
 
   end function lj_force

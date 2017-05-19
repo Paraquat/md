@@ -24,5 +24,6 @@ call init_cell%read_cell(opts%sfile)
 call mdr%init_md(init_cell, pp, pp%ns, opts%shift)
 call mdr%get_force_and_energy
 write(*,*) "Energy = ", mdr%pe_t
+write(*,*) "Force = ", mdr%f_t(1,1)
 
 end program md

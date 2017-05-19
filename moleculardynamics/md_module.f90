@@ -23,10 +23,13 @@ type type_md
   contains
     procedure :: init_md
     procedure :: get_force_and_energy
+    procedure :: vVerlet_v_half
+    procedure :: vVerlet_r
 end type type_md
 
 contains
 
+  ! Initialise variables/Allocate matrices for MD run
   subroutine init_md(mdr, init_cell, pp, nstep, shift)
 
     ! passed variables
@@ -51,6 +54,7 @@ contains
     mdr%species = init_cell%spec_int
   end subroutine init_md
 
+  ! Compute the potential energy and force on each atom
   subroutine get_force_and_energy(mdr)
 
     ! passed variables
@@ -83,5 +87,19 @@ contains
     end do
     pe = pe*half
   end subroutine get_force_and_energy
+
+  subroutine vVerlet_v_half(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+  end subroutine vVerlet_v_half
+
+  subroutine vVerlet_r(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+  end subroutine vVerlet_r
 
 end module md_module
