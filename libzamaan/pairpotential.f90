@@ -93,7 +93,7 @@ contains
     pp%sigma = sigma
     pp%epsilon = epsilon
     pp%s6 = sigma**6
-    pp%s12 = sigma**12
+    pp%s12 = pp%s6**2
     pp%c_f = 24.0_double*epsilon
     pp%c_e = 4.0_double*epsilon
     pp%r_cut = r_cut

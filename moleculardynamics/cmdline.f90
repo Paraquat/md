@@ -13,6 +13,8 @@ type type_cmdline
   character(40)       :: ppfile = 'pp.in'
   character(40)       :: sfile = 'cell.in'
   character(40)       :: outfile = 'md.out'
+  real(double)        :: dt
+  real(double)        :: T_ext
   integer             :: nsteps
   logical             :: shift = .false.
 
@@ -31,6 +33,8 @@ subroutine print_help(cmdl)
   write(*,*)
   write(*,'(a)') 'Mandatory arguments:'
   write(*,'(a)') '-ns, --nsteps   [nsteps]    number of md steps'
+  write(*,'(a)') '-dt, --timestep [dt]        md time step'
+  write(*,'(a)') '-T,  --temp     [T_ext]     Initial/target temperature'
   write(*,'(a)')
   write(*,'(a)') 'Optional arguments:'
   write(*,'(a)') '-pp, --ppfile   [ppfile]    input pair potential file'
@@ -66,6 +70,14 @@ subroutine get_args(cmdl)
     case ('-ns', '--nsteps')
       call get_command_argument(i+1, arg)
       read(arg,*) cmdl%nsteps
+      i=i+2
+    case ('-dt', '--timestep')
+      call get_command_argument(i+1, arg)
+      read(arg,*) cmdl%dt
+      i=i+2
+    case ('-T', '--temp')
+      call get_command_argument(i+1, arg)
+      read(arg,*) cmdl%T_ext
       i=i+2
     case ('-pp', '--ppfile')
       call get_command_argument(i+1, arg)
