@@ -13,10 +13,13 @@ type type_cmdline
   character(40)       :: ppfile = 'pp.in'
   character(40)       :: sfile = 'cell.in'
   character(40)       :: outfile = 'md.out'
+  character(3)        :: ensemble = 'nve'
   real(double)        :: dt
   real(double)        :: T_ext
   integer             :: nsteps
   logical             :: shift = .false.
+  logical             :: comv = .false.
+  logical             :: cart = .false.
 
   contains
     procedure :: print_help
@@ -37,10 +40,13 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-T,  --temp     [T_ext]     Initial/target temperature'
   write(*,'(a)')
   write(*,'(a)') 'Optional arguments:'
-  write(*,'(a)') '-pp, --ppfile   [ppfile]    input pair potential file'
-  write(*,'(a)') '-i,  --sfile    [sfile]     input structure file'
-  write(*,'(a)') '-o,  --out      [outfile]   output file'
-  write(*,'(a)') '-s,  --shift    [shift]     shift potential/force (T/F)'
+  write(*,'(a)') '-pp, --ppfile   [ppfile]    input pair potential file (default pp.in)'
+  write(*,'(a)') '-i,  --sfile    [sfile]     input structure file (default cell.in)'
+  write(*,'(a)') '-o,  --out      [outfile]   output file (default md.out)'
+  write(*,'(a)') '-e,  --ensemble [ensemble]  MD ensemble (default nve)'
+  write(*,'(a)') '-s,  --shift    [shift]     shift potential/force (default F)'
+  write(*,'(a)') '-rv, --comv     [comv]      remove COM velocity (default F)'
+  write(*,'(a)') '-c,  --cart     [cart]      Input coordinates are Cartesian (default F)'
 
 end subroutine print_help
 
@@ -91,8 +97,18 @@ subroutine get_args(cmdl)
       call get_command_argument(i+1, arg)
       cmdl%outfile=trim(arg)
       i=i+2
+    case ('-e', '--ensemble')
+      call get_command_argument(i+1, arg)
+      cmdl%ensemble=trim(arg)
+      i=i+2
     case ('-s', '--shift')
       cmdl%shift=.true.
+      i=i+1
+    case ('-cv', '--comv')
+      cmdl%comv=.true.
+      i=i+1
+    case ('-c', '--cart')
+      cmdl%cart=.true.
       i=i+1
     case default
       write(*,'(a,a,/)') 'Unrecognised command line option: ', arg

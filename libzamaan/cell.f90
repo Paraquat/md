@@ -2,6 +2,7 @@ module cell
 
 use vector
 use datatypes
+use constants
 
 implicit none
 
@@ -27,9 +28,11 @@ type type_cell
     procedure :: frac2cart
     procedure :: disp_frac2cart
     procedure :: disp_frac2cart_noshift
+    procedure :: cell_frac2cart
     procedure :: invert_lat
     procedure :: cart2frac
     procedure :: mic
+    procedure :: wrap_positions_cart
     procedure :: init
     procedure :: get_dt
     procedure :: read_xyz
@@ -42,6 +45,7 @@ type type_cell
     procedure :: write_poscar
     procedure :: write_cell
     procedure :: write_lammps
+    procedure :: write_xsf
     procedure :: supercell
     procedure :: cut_ortho
 end type type_cell
@@ -185,15 +189,25 @@ function volume(p) result(vol)
   vol = dot_product(p%h(1,:), cp)
 end function volume
 
-! convert fractional coordinates to cartesian
-function frac2cart(p,v) result(w)
+function frac2cart(p, v) result (r)
 
   class(type_cell), intent(inout)   :: p
 
   real(double), dimension(3), intent(in)    :: v
-  real(double), dimension(3)                :: w
+  real(double), dimension(3)                :: r, w
 
-  w = matmul(v,p%h)
+  integer                           :: i
+
+  w=v
+  do i=1,3
+    if ( w(i) .gt. one ) then
+      w(i) = w(i)-one
+    else if ( w(i) .lt. zero) then
+      w(i) = w(i) + one
+    end if
+  end do
+
+  r = matmul(w,p%h)
 end function frac2cart
 
 ! convert displacement from franctional to cartesian, shift coordinates
@@ -230,6 +244,21 @@ function disp_frac2cart_noshift(p, v) result (r)
 
   r = matmul(v,p%h)
 end function disp_frac2cart_noshift
+
+! Convert the cell from fractional to Cartesian
+subroutine cell_frac2cart(p)
+
+  class(type_cell), intent(inout)   :: p
+
+  integer :: i
+
+  if (allocated(p%rcart) .eqv. .false.) allocate(p%rcart(p%nat,3))
+
+  do i=1,p%nat
+    p%rcart(i,:) = p%frac2cart(p%r(i,:))
+  end do
+
+end subroutine cell_frac2cart
 
 ! Invert basis matrix
 subroutine invert_lat(p)
@@ -293,6 +322,25 @@ subroutine mic(p, coord1, coord2, relative)
   relative = relative - box * nint(relative/box)
 end subroutine mic
 
+! Wrap atoms into the unit cell (orthrhombic cell, Cartesian coordinates only)
+subroutine wrap_positions_cart(p)
+
+  class(type_cell), intent(inout)   :: p
+
+  integer                           :: i, j
+
+  do i=1,p%nat
+    do j=1,3
+      if (p%rcart(i,j) > p%h(j,j)) then
+        p%rcart(i,j) = p%rcart(i,j) - p%h(j,j)
+      else if (p%rcart(i,j) < zero) then
+        p%rcart(i,j) = p%rcart(i,j) + p%h(j,j)
+      end if
+    end do
+  end do
+
+end subroutine wrap_positions_cart
+
 ! Initialise cell from data in memory
 subroutine init(p, nat, nspec, h, r, species)
 
@@ -305,13 +353,14 @@ subroutine init(p, nat, nspec, h, r, species)
 
   p%nat = nat
   p%nspec = nspec
-  allocate(p%r(nat,3),p%species(nat))
+  allocate(p%r(nat,3),p%rcart(nat,3),p%species(nat))
   p%r = r
   p%h = h
   p%species = species
 
-  call p%count_species()
-  call p%int_label_species()
+  call p%count_species
+  call p%int_label_species
+  call p%cell_frac2cart
 
 end subroutine init
 
@@ -445,8 +494,9 @@ subroutine read_cell(p, infilename)
   end do outer2
   close(101)
 
-  call p%count_species()
-  call p%int_label_species()
+  call p%cell_frac2cart
+  call p%count_species
+  call p%int_label_species
 end subroutine read_cell
 
 ! read vasp poscar file
@@ -664,10 +714,35 @@ subroutine write_lammps(p, filename, comment)
         exit
       end if
     end do
-    write(101,'(i8,i4,f6.3,3f14.8)') i, s, 0.0, p%frac2cart(p%r(i,:))
+    write(101,'(i8,i4,f6.3,3f14.8)') i, s, 0.0, p%disp_frac2cart(p%r(i,:))
   end do
   close(101)
 end subroutine write_lammps
+
+! Write structure to .xsf file (for MD visualisation)
+subroutine write_xsf(p, iunit, md, step, nsteps)
+
+  ! passed variales
+  class(type_cell), intent(inout)   :: p
+  logical, intent(in)               :: md
+  integer, intent(in)               :: iunit, step, nsteps
+
+  ! local variables
+  integer                           :: i
+
+  if (step == 1) write(iunit,'("ANIMSTEP ",i8)') nsteps
+  write(iunit,'(a)') "CRYSTAL"
+  write(iunit,'("PRIMVEC   ", i8)') step
+  do i=1,3
+    write(iunit,'(3f14.8)') p%h(i,:)
+  end do
+  write(iunit,'("PRIMCOORD ", i8)') step
+  write(iunit,'(2i8)') p%nat, 1
+  do i=1,p%nat
+    write(iunit,'(a4,3f16.8)') p%species(i), p%rcart(i,:)
+  end do
+
+end subroutine write_xsf
 
 ! Construct nx x ny x nz supercell
 subroutine supercell(p, sc_dim, psuper)

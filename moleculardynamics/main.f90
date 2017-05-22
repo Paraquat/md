@@ -20,10 +20,8 @@ call opts%get_args()
 call pp%init_pp_from_file(opts%ppfile, opts%shift)
 call init_cell%read_cell(opts%sfile)
 
-call mdr%init_md(init_cell, pp, pp%ns, opts%dt, opts%T_ext, opts%shift)
+call mdr%init_md(init_cell, pp, opts%cart, opts%ensemble, pp%ns, opts%dt, &
+                 opts%T_ext, opts%shift, opts%comv)
 call mdr%md_run(1,opts%nsteps)
-call mdr%get_force_and_energy
-write(*,*) "Energy = ", mdr%pe_t
-write(*,*) "Force = ", mdr%f_t(1,1)
 
 end program md
