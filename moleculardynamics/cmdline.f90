@@ -45,7 +45,7 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-o,  --out      [outfile]   output file (default md.out)'
   write(*,'(a)') '-e,  --ensemble [ensemble]  MD ensemble (default nve)'
   write(*,'(a)') '-s,  --shift    [shift]     shift potential/force (default F)'
-  write(*,'(a)') '-rv, --comv     [comv]      remove COM velocity (default F)'
+  write(*,'(a)') '-cv, --comv     [comv]      remove COM velocity (default F)'
   write(*,'(a)') '-c,  --cart     [cart]      Input coordinates are Cartesian (default F)'
 
 end subroutine print_help

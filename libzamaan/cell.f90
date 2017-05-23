@@ -310,17 +310,19 @@ end function cart2frac
 
 ! Minimum image convention periodic boundary conditions
 ! (only works for orthorhombic cells)
-subroutine mic(p, coord1, coord2, relative)
+function mic(p, coord1, coord2) result(relative)
 
-  class(type_cell), intent(inout)   :: p
+  class(type_cell), intent(inout)         :: p
+  real(double), dimension(3), intent(in)  :: coord1, coord2
+  real(double), dimension(3)              :: relative
 
-  real(double), dimension(3)                :: coord1, coord2, relative, box
-
-  box = (/p%param(1), p%param(2), p%param(3)/)
+  integer                            :: i
 
   relative = coord2 - coord1
-  relative = relative - box * nint(relative/box)
-end subroutine mic
+  do i=1,3
+    relative(i) = relative(i) - p%h(i,i)*nint(relative(i)/p%h(i,i))
+  end do
+end function mic
 
 ! Wrap atoms into the unit cell (orthrhombic cell, Cartesian coordinates only)
 subroutine wrap_positions_cart(p)

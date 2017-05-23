@@ -29,6 +29,7 @@ type type_md
     procedure :: init_md
     procedure :: get_force_and_energy
     procedure :: get_kinetic_energy
+    procedure :: get_temperature
     procedure :: vVerlet_v_half
     procedure :: vVerlet_r
     procedure :: md_run
@@ -152,6 +153,7 @@ contains
     write(*,*)
     call mdr%get_kinetic_energy
     call mdr%get_force_and_energy
+    mdr%f_t = mdr%f_t_dt
 
     write(*,*)
     write(*,'(2x,a)') "Initial forces:"
@@ -170,10 +172,10 @@ contains
 
     ! local variables
     integer                         :: iat, jat, s_i, s_j
-    real(double), dimension(3)      :: r_ij, r_ij_cart
+    real(double), dimension(3)      :: r_ij_cart
     real(double)                    :: mod_r_ij, mod_f, pe
 
-    mdr%f_t = zero
+    mdr%f_t_dt = zero
     mdr%pe_t = zero
 
     do iat=1,mdr%nat
@@ -181,13 +183,14 @@ contains
         if (iat == jat) cycle
         s_i = mdr%species(iat)
         s_j = mdr%species(jat)
-        r_ij = mdr%p_t%rcart(jat,:) - mdr%p_t%rcart(iat,:)
-        r_ij_cart = mdr%p_t%disp_frac2cart_noshift(r_ij)
+        r_ij_cart = mdr%p_t_dt%mic(mdr%p_t_dt%rcart(iat,:), &
+                                   mdr%p_t_dt%rcart(jat,:))
         mod_r_ij = modulus(r_ij_cart)
         if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
           r_ij_cart = norm(r_ij_cart)
-          mod_f = mdr%pp%lj_force(mod_r_ij, s_i, s_j, mdr%shift)
-          mdr%f_t(iat,:) = mdr%f_t(iat,:) + mod_f*r_ij_cart
+          mod_f = -mdr%pp%lj_force(mod_r_ij, s_i, s_j, mdr%shift)
+          mdr%f_t_dt(iat,:) = mdr%f_t_dt(iat,:) + mod_f*r_ij_cart
+          write(*,*) iat, mdr%f_t_dt(iat,:)
           pe = mdr%pp%lj_energy(mod_r_ij, s_i, s_j, mdr%shift)
           mdr%pe_t = mdr%pe_t + pe
         end if
@@ -210,6 +213,16 @@ contains
     write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke_t
 
   end subroutine get_kinetic_energy
+
+  ! Compute the temperature
+  subroutine get_temperature(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    mdr%T_int_t = mdr%sumv2/mdr%ndof
+    write(*,'("  Temperature      = ",f16.8)') mdr%T_int_t
+  end subroutine get_temperature
 
   ! Velocity Verlet dt/2 step for velocities
   subroutine vVerlet_v_half(mdr)
@@ -244,7 +257,8 @@ contains
     integer, intent(in)             :: s_start, s_end
 
     ! local variables
-    integer   :: s, traj_unit, dump_unit
+    integer       :: s, traj_unit, dump_unit
+    real(double)  :: total_energy
 
     traj_unit = 101
     dump_unit = 102
@@ -260,12 +274,20 @@ contains
       call mdr%vVerlet_v_half
       call mdr%vVerlet_r
       call mdr%p_t_dt%write_xsf(traj_unit, .true., s+1, s_end+1)
+      call mdr%get_force_and_energy
       call mdr%vVerlet_v_half
       call mdr%update_v
       call mdr%get_kinetic_energy
-      call mdr%get_force_and_energy
+      write(*,'("  Total energy     = ",e16.8)') total_energy
+      call mdr%get_temperature
+      total_energy = mdr%ke_t + mdr%pe_t
       if (mdr%dump .eqv. .true.) call mdr%md_dump(dump_unit, s)
+      mdr%p_t%rcart = mdr%p_t_dt%rcart
+      if (mdr%ensemble == 'npt' .or. mdr%ensemble == 'nph') then
+        mdr%p_t%h = mdr%p_t_dt%h
+      end if
       mdr%v_t = mdr%v_t_dt
+      mdr%f_t = mdr%f_t_dt
     end do
     close(traj_unit)
     close(dump_unit)
