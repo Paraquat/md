@@ -22,6 +22,7 @@ type type_pp
     procedure :: init_pp
     procedure :: lj_energy
     procedure :: lj_force
+    procedure :: lj_force_and_energy
 end type type_pp
 
 contains
@@ -162,5 +163,31 @@ contains
     end if
 
   end function lj_force
+
+  ! Compute force and energy in the same loop
+  subroutine lj_force_and_energy(pp, r_ij, s_i, s_j, shift, f, e)
+
+    ! passed variables
+    class(type_pp), intent(in)  :: pp
+    real(double), intent(in)    :: r_ij
+    integer, intent(in)         :: s_i, s_j
+    logical, intent(in)         :: shift
+    real(double), intent(out)   :: f
+    real(double), intent(out)   :: e
+
+    ! local variables
+    real(double)                :: inv_r, inv_r6
+
+    inv_r = one/r_ij
+    inv_r6 = inv_r**6
+
+    e = pp%c_e(s_i,s_j)*pp%s6(s_i,s_j)*inv_r6*(inv_r6*pp%s6(s_i,s_j)-one)
+    f = -pp%c_f(s_i,s_j)*inv_r*inv_r6*pp%s6(s_i,s_j)* &
+        (two*pp%s6(s_i,s_j)*inv_r6 - one)
+    if (shift .eqv. .true.) then
+      f = f - pp%f_shift(s_i,s_j)
+      e = e - pp%e_shift(s_i,s_j)
+    end if
+  end subroutine lj_force_and_energy
 
 end module pairpotential

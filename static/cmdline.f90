@@ -13,13 +13,7 @@ type type_cmdline
   character(40)       :: ppfile = 'pp.in'
   character(40)       :: sfile = 'cell.in'
   character(40)       :: outfile = 'md.out'
-  character(3)        :: ensemble = 'nve'
-  real(double)        :: dt
-  real(double)        :: T_ext
-  integer             :: nsteps
-  integer             :: dump_freq
   logical             :: shift = .false.
-  logical             :: comv = .false.
   logical             :: cart = .false.
 
   contains
@@ -36,19 +30,13 @@ subroutine print_help(cmdl)
   write(*,'(a,a,a)') 'Usage: ', trim(cmdl%exe), ' [OPTIONS]'
   write(*,*)
   write(*,'(a)') 'Mandatory arguments:'
-  write(*,'(a)') '-ns, --nsteps   [nsteps]    number of md steps'
-  write(*,'(a)') '-dt, --timestep [dt]        md time step'
-  write(*,'(a)') '-T,  --temp     [T_ext]     Initial/target temperature'
   write(*,'(a)')
   write(*,'(a)') 'Optional arguments:'
   write(*,'(a)') '-pp, --ppfile   [ppfile]    input pair potential file (default pp.in)'
   write(*,'(a)') '-i,  --sfile    [sfile]     input structure file (default cell.in)'
   write(*,'(a)') '-o,  --out      [outfile]   output file (default md.out)'
-  write(*,'(a)') '-e,  --ensemble [ensemble]  MD ensemble (default nve)'
   write(*,'(a)') '-s,  --shift    [shift]     shift potential/force (default F)'
-  write(*,'(a)') '-cv, --comv     [comv]      remove COM velocity (default F)'
   write(*,'(a)') '-c,  --cart     [cart]      Input coordinates are Cartesian (default F)'
-  write(*,'(a)') '-d,  --dumpfreq [freq]      Frequency of dump in time steps'
 
 end subroutine print_help
 
@@ -62,10 +50,10 @@ subroutine get_args(cmdl)
   call get_command_argument(0,arg)
   cmdl%exe=arg
 
-  if (command_argument_count() == 0) then
-    call cmdl%print_help()
-    stop "No command line arguments."
-  end if
+!  if (command_argument_count() == 0) then
+!    call cmdl%print_help()
+!    stop "No command line arguments."
+!  end if
 
   i=1
   do while (i .le. command_argument_count())
@@ -75,18 +63,6 @@ subroutine get_args(cmdl)
     case ('-h', '--help')
       call cmdl%print_help()
       stop
-    case ('-ns', '--nsteps')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%nsteps
-      i=i+2
-    case ('-dt', '--timestep')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%dt
-      i=i+2
-    case ('-T', '--temp')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%T_ext
-      i=i+2
     case ('-pp', '--ppfile')
       call get_command_argument(i+1, arg)
       cmdl%ppfile=trim(arg)
@@ -99,19 +75,8 @@ subroutine get_args(cmdl)
       call get_command_argument(i+1, arg)
       cmdl%outfile=trim(arg)
       i=i+2
-    case ('-e', '--ensemble')
-      call get_command_argument(i+1, arg)
-      cmdl%ensemble=trim(arg)
-      i=i+2
-    case ('-d', '--dumpfreq')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%dump_freq
-      i=i+2
     case ('-s', '--shift')
       cmdl%shift=.true.
-      i=i+1
-    case ('-cv', '--comv')
-      cmdl%comv=.true.
       i=i+1
     case ('-c', '--cart')
       cmdl%cart=.true.

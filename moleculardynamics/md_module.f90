@@ -13,10 +13,11 @@ type type_md
   type(type_cell) :: p_t, p_t_dt
   type(type_pp)   :: pp
   character(3)    :: ensemble
-  integer         :: nstep, nspec, nat, ndof, iprint
+  integer         :: nstep, nspec, nat, ndof, iprint, dump_freq
   logical         :: shift, remove_com_v, dump
   character(40)   :: position_file, dump_file
   integer, allocatable, dimension(:)          :: species
+  real(double), allocatable, dimension(:,:)   :: mass
   real(double), allocatable, dimension(:,:)   :: v_t, v_t_dt
   real(double), allocatable, dimension(:,:)   :: f_t, f_t_dt
   real(double), dimension(3,3)                :: p_g_t, p_g_t_dt
@@ -30,6 +31,7 @@ type type_md
     procedure :: get_force_and_energy
     procedure :: get_kinetic_energy
     procedure :: get_temperature
+    procedure :: get_pressure
     procedure :: vVerlet_v_half
     procedure :: vVerlet_r
     procedure :: md_run
@@ -80,6 +82,7 @@ contains
     mdr%shift = shift
     mdr%remove_com_v = remove_com_v
     mdr%dump = .true.
+    mdr%dump_freq = 1
 
     allocate(mdr%species(mdr%nat))
     allocate(mdr%v_t(mdr%nat,3), mdr%v_t_dt(mdr%nat,3))
@@ -188,10 +191,11 @@ contains
         mod_r_ij = modulus(r_ij_cart)
         if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
           r_ij_cart = norm(r_ij_cart)
-          mod_f = -mdr%pp%lj_force(mod_r_ij, s_i, s_j, mdr%shift)
+          call mdr%pp%lj_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
+                                          mod_f, pe)
+          ! mod_f = -mdr%pp%lj_force(mod_r_ij, s_i, s_j, mdr%shift)
           mdr%f_t_dt(iat,:) = mdr%f_t_dt(iat,:) + mod_f*r_ij_cart
-          write(*,*) iat, mdr%f_t_dt(iat,:)
-          pe = mdr%pp%lj_energy(mod_r_ij, s_i, s_j, mdr%shift)
+          ! pe = mdr%pp%lj_energy(mod_r_ij, s_i, s_j, mdr%shift)
           mdr%pe_t = mdr%pe_t + pe
         end if
       end do
@@ -223,6 +227,20 @@ contains
     mdr%T_int_t = mdr%sumv2/mdr%ndof
     write(*,'("  Temperature      = ",f16.8)') mdr%T_int_t
   end subroutine get_temperature
+
+  ! Compute the pressure using the virial
+  subroutine get_pressure(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    ! local variables
+    integer                         :: i
+
+    do i=1,mdr%nat
+    end do
+
+  end subroutine get_pressure
 
   ! Velocity Verlet dt/2 step for velocities
   subroutine vVerlet_v_half(mdr)
@@ -259,6 +277,7 @@ contains
     ! local variables
     integer       :: s, traj_unit, dump_unit
     real(double)  :: total_energy
+    logical       :: d
 
     traj_unit = 101
     dump_unit = 102
@@ -266,14 +285,20 @@ contains
 
     open(unit=traj_unit, file=mdr%position_file, status='replace')
     open(unit=dump_unit, file=mdr%dump_file, status='replace')
-    call mdr%p_t%write_xsf(traj_unit, .true., 1, s_end+1)
-    if (mdr%dump .eqv. .true.) call mdr%md_dump(dump_unit, s)
+    call mdr%p_t%write_xsf(traj_unit, .true., 1, (s_end/mdr%dump_freq)+1)
+    if (mdr%dump .eqv. .true.) then
+      if (mdr%dump_freq == 0) call mdr%md_dump(dump_unit, s)
+    end if
     do s=s_start,s_end
+      d = .false.
+      if (mod(s,mdr%dump_freq) == 0) d = .true.
       write(*,*)
       write(*,'("MD step ",i6," of ",i6)')  s, s_end
       call mdr%vVerlet_v_half
       call mdr%vVerlet_r
-      call mdr%p_t_dt%write_xsf(traj_unit, .true., s+1, s_end+1)
+      if (d .eqv. .true.) then
+        call mdr%p_t_dt%write_xsf(traj_unit, .true., s+1, s_end+1)
+      end if
       call mdr%get_force_and_energy
       call mdr%vVerlet_v_half
       call mdr%update_v
@@ -281,13 +306,19 @@ contains
       write(*,'("  Total energy     = ",e16.8)') total_energy
       call mdr%get_temperature
       total_energy = mdr%ke_t + mdr%pe_t
-      if (mdr%dump .eqv. .true.) call mdr%md_dump(dump_unit, s)
+      if (mdr%dump .eqv. .true.) then
+        if (d .eqv. .true.) call mdr%md_dump(dump_unit, s)
+      end if
       mdr%p_t%rcart = mdr%p_t_dt%rcart
       if (mdr%ensemble == 'npt' .or. mdr%ensemble == 'nph') then
         mdr%p_t%h = mdr%p_t_dt%h
       end if
       mdr%v_t = mdr%v_t_dt
       mdr%f_t = mdr%f_t_dt
+      if (d .eqv. .true.) then
+        call flush(traj_unit)
+        call flush(dump_unit)
+      end if
     end do
     close(traj_unit)
     close(dump_unit)
@@ -321,7 +352,7 @@ contains
       end do
     end if
 
-    ! update the square of the velocity (for kinetic energy etc)
+    ! update the sum of the squared velocity (for kinetic energy etc)
     mdr%sumv2 = zero
     do i=1,mdr%nat
       mdr%sumv2 = mdr%sumv2 + sum(mdr%v_t(i,:)**2)
@@ -340,7 +371,7 @@ contains
     integer                         :: i
     character(80)                   :: fmt
 
-    fmt = "(2i5,3f16.10)"
+    fmt = "(2i5,3e20.10)"
     do i=1,mdr%nat
       write(iou,fmt) i, mdr%species(i), arr(i,:)
     end do
