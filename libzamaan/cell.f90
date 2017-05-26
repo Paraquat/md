@@ -16,6 +16,7 @@ type type_cell
   real(double), allocatable, dimension(:,:) :: r, rcart, dt
   character(2), allocatable, dimension(:)   :: spec, species
   integer, allocatable, dimension(:)        :: spec_count, spec_int
+  real(double), allocatable, dimension(:)   :: mass
   real(double), dimension(3,3)              :: h, h_inv
   real(double), dimension(6)                :: param
 
@@ -439,9 +440,10 @@ subroutine read_cell(p, infilename)
 
   class(type_cell), intent(inout)   :: p
 
-  character(40)                       :: infilename
+  character(40)                       :: infilename, s
   character(80)                       :: line
-  integer                             :: i, reason
+  integer                             :: i, j, reason
+  real(double)                        :: m
 
   infilename = trim(infilename)
 
@@ -459,9 +461,9 @@ subroutine read_cell(p, infilename)
         inner1: do i = 1,3
           read(101,*) p%h(i,:)
         end do inner1
+        rewind(unit=101)
+        exit outer1
       end if
-      rewind(unit=101)
-      exit outer1
     end if
   end do outer1
 
@@ -494,11 +496,37 @@ subroutine read_cell(p, infilename)
       end if
     end if
   end do outer2
-  close(101)
+
 
   call p%cell_frac2cart
   call p%count_species
   call p%int_label_species
+  allocate(p%mass(p%nspec))
+  rewind(unit=101)
+
+  ! read masses
+  outer3: do
+    read(101,'(a)',iostat=reason) line
+    if (reason > 0) then
+      write(*,*) "Read error - this shouldn't happen!"
+    else if (reason < 0) then
+      exit outer3
+    else
+      if (trim(line(1:19)) .eq. "%BLOCK species_mass") then
+        inner3: do i=1,p%nspec
+          read(101,*) s, m
+          do j=1,p%nspec
+            if (trim(s) == p%spec(j)) p%mass(j) = m
+          end do
+        end do inner3
+        rewind(unit=101)
+        exit outer3
+      end if
+    end if
+  end do outer3
+
+  close(101)
+
 end subroutine read_cell
 
 ! read vasp poscar file

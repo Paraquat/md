@@ -4,8 +4,8 @@ include Makefile.inc
 
 LDFLAGS = $(LPATH) $(IPATH) -lfftw3 -llapack -lblas
 FCFLAGS = -fbackslash # gfortran ONLY!
-SRCS = datatypes.f90 constants.f90 rng.f90 vector.f90 progress.f90 grft.f90 data.f90 cell.f90 trajectory.f90 pairdist.f90 pairpotential.f90
-OBJS = datatypes.o constants.o rng.o vector.o progress.o grft.o data.o cell.o trajectory.o pairdist.o pairpotential.o
+SRCS = datatypes.f90 constants.f90 rng.f90 vector.f90 progress.f90 grft.f90 data.f90 cell.f90 trajectory.f90 pairdist.f90 pairpotential.f90 ljpotential.f90
+OBJS = datatypes.o constants.o rng.o vector.o progress.o grft.o data.o cell.o trajectory.o pairdist.o pairpotential.o ljpotential.o
 
 .SUFFIXES: $(SUFFIXES) .f90
 .PHONY: clean
@@ -21,7 +21,8 @@ clean:
 
 %.o: %.mod
 
-pairpotential.o: datatypes.o vector.o constants.o pairpotential.f90
+ljpotential.o: datatypes.o constants.o ljpotential.f90
+pairpotential.o: datatypes.o constants.o pairpotential.f90
 pairdist.o: datatypes.o constants.o progress.o cell.o data.o grft.o pairdist.f90
 trajectory.o: datatypes.o cell.o trajectory.f90
 cell.o: datatypes.o cell.f90 vector.o

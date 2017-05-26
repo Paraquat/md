@@ -11,7 +11,7 @@ implicit none
 
 type type_static
   type(type_cell) :: p
-  type(type_pp)   :: pp
+  type(type_pairpotential)   :: pp
   integer         :: nspec, nat, ndof, iprint
   logical         :: shift
   character(40)   :: position_file, dump_file
@@ -34,9 +34,9 @@ contains
   subroutine init_static(static, init_cell, pp, init_cell_cart, shift)
 
     ! passed variables
-    class(type_static), intent(inout)   :: static
-    type(type_cell), intent(in)     :: init_cell
-    type(type_pp), intent(in)       :: pp
+    class(type_static), intent(inout)     :: static
+    type(type_cell), intent(in)           :: init_cell
+    type(type_pairpotential), intent(in)  :: pp
     logical, intent(in)             :: init_cell_cart
     logical, intent(in)             :: shift
 
@@ -115,7 +115,7 @@ contains
         mod_r_ij = modulus(r_ij_cart)
         if (mod_r_ij < static%pp%r_cut(s_i,s_j)) then
           r_ij_cart = norm(r_ij_cart)
-          call static%pp%lj_force_and_energy(mod_r_ij, s_i, s_j, static%shift, &
+          call static%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, static%shift, &
                                           mod_f, pe)
           static%f(iat,:) = static%f(iat,:) + mod_f*r_ij_cart
           static%pe = static%pe + pe
@@ -149,7 +149,7 @@ contains
   subroutine dump_atom_arr(static, iou, arr)
 
     ! passed variables
-    class(type_static), intent(inout)             :: static
+    class(type_static), intent(inout)         :: static
     integer, intent(in)                       :: iou
     real(double), dimension(:,:), intent(in)  :: arr
 

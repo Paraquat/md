@@ -4,8 +4,8 @@ PROG = md
 
 #FCFLAGS = -fbackslash
 LDFLAGS = $(LPATH) $(IPATH) -lzamaan  -lfftw3 -llapack -lblas
-SRCS = md_module.f90 cmdline.f90 main.f90
-OBJS = md_module.o cmdline.o main.o
+SRCS = thermostat_module.f90 md_module.f90 cmdline.f90 main.f90
+OBJS = thermostat_module.o md_module.o cmdline.o main.o
 DEBUG = -O0 -g -fbounds-check
 
 .SUFFIXES: $(SUFFIXES) .f90
@@ -26,6 +26,7 @@ $(PROG): $(OBJS)
 
 %.o: %.mod
 
-md_module.o: md_module.f90 ../libzamaan/libzamaan.a
+thermostat_module.o: thermostat_module.f90 ../libzamaan/libzamaan.a
+md_module.o: md_module.f90 thermostat_module.f90 ../libzamaan/libzamaan.a
 cmdline.o: cmdline.f90
 main.o: cmdline.o md_module.f90 main.f90 ../libzamaan/libzamaan.a

@@ -6,28 +6,31 @@ use vector
 use cell
 use pairpotential
 use rng
+use thermostat_module
 
 implicit none
 
 type type_md
-  type(type_cell) :: p_t, p_t_dt
-  type(type_pp)   :: pp
+  type(type_cell)           :: p_t, p_t_dt
+  type(type_pairpotential)  :: pp
+  type(type_thermostat)     :: th
   character(3)    :: ensemble
   integer         :: nstep, nspec, nat, ndof, iprint, dump_freq
   logical         :: shift, remove_com_v, dump
-  character(40)   :: position_file, dump_file
+  character(40)   :: position_file, dump_file, stat_file, therm_type
   integer, allocatable, dimension(:)          :: species
   real(double), allocatable, dimension(:,:)   :: mass
   real(double), allocatable, dimension(:,:)   :: v_t, v_t_dt
-  real(double), allocatable, dimension(:,:)   :: f_t, f_t_dt
+  real(double), allocatable, dimension(:,:)   :: f
   real(double), dimension(3,3)                :: p_g_t, p_g_t_dt
   real(double), dimension(3,3)                :: P_int_t, P_int_t_dt, P_ext
   real(double), dimension(3)                  :: sumv
-  real(double)   :: pe_t, pe_t_dt, ke_t, ke_t_dt, T_int_t, T_int_t_dt, T_ext, &
-                    dt, sumv2
+  real(double)   :: pe, ke, T_int, T_ext, dt, sumv2
 
   contains
     procedure :: init_md
+    procedure :: init_velocities
+    procedure :: update_v
     procedure :: get_force_and_energy
     procedure :: get_kinetic_energy
     procedure :: get_temperature
@@ -35,9 +38,9 @@ type type_md
     procedure :: vVerlet_v_half
     procedure :: vVerlet_r
     procedure :: md_run
-    procedure :: update_v
     procedure :: dump_atom_arr
     procedure :: md_dump
+    procedure :: stat_dump
 end type type_md
 
 contains
@@ -49,7 +52,7 @@ contains
     ! passed variables
     class(type_md), intent(inout)   :: mdr
     type(type_cell), intent(in)     :: init_cell
-    type(type_pp), intent(in)       :: pp
+    type(type_pairpotential), intent(in)  :: pp
     character(3), intent(in)        :: ensemble
     integer, intent(in)             :: nstep
     real(double)                    :: dt
@@ -60,11 +63,10 @@ contains
 
     ! local variables
     integer                         :: i, j
-    real(double), dimension(3)      :: sumv
-    real(double)                    :: sumv2, sfac
 
     mdr%position_file = "trajectory.xsf"
     mdr%dump_file = "dump.out"
+    mdr%stat_file = "stat.out"
     write(*,'(a)') "Starting MD run"
     write(*,*)
     mdr%p_t = init_cell
@@ -83,10 +85,11 @@ contains
     mdr%remove_com_v = remove_com_v
     mdr%dump = .true.
     mdr%dump_freq = 1
+    mdr%therm_type = 'none'
 
     allocate(mdr%species(mdr%nat))
     allocate(mdr%v_t(mdr%nat,3), mdr%v_t_dt(mdr%nat,3))
-    allocate(mdr%f_t(mdr%nat,3), mdr%f_t_dt(mdr%nat,3))
+    allocate(mdr%f(mdr%nat,3))
     mdr%species = init_cell%spec_int
 
     write(*,'(a)') "Simulation parameters:"
@@ -97,6 +100,7 @@ contains
     write(*,'("Remove COM velocity    ",l8)') mdr%remove_com_v
     write(*,*)
     write(*,'(a)') "Species and pair potential details:"
+    write(*,'("Pair potential type    ",a)') mdr%pp%potential_type
     write(*,'("Pair potential cutoff  ",f8.4)') mdr%pp%r_cut
     write(*,'("Pair potential shift   ",l8)') mdr%shift
     write(*,'(2x,a)') "Sigma"
@@ -107,6 +111,12 @@ contains
     do i=1,mdr%nspec
       write(*,'(4x,3f10.6)') mdr%pp%epsilon(i,:)
     end do
+    if (mdr%pp%potential_type == "morse") then
+      write(*,'(2x,a)') "r_e"
+      do i=1,mdr%nspec
+        write(*,'(4x,3f10.6)') mdr%pp%r_e(i,:)
+      end do
+    end if
     write(*,*)
     write(*,'(2x,a)') "label, species, count"
     do i=1,mdr%nspec
@@ -128,24 +138,14 @@ contains
     select case (ensemble)
     case ('nve')
       mdr%ndof = 3*mdr%nat
+    case ('nvt')
+      call mdr%th%init_thermostat(mdr%therm_type, mdr%nat, mdr%nat, mdr%T_ext)
     end select
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-1
 
-    ! initialise rng
-    call init_rand
-
-    ! initialise velocities w/ uniform random distribution
-    sumv2 = zero
-    do i=1,mdr%nat
-      do j=1,3
-        call rand(mdr%v_t(i,j))
-        mdr%v_t(i,j) = mdr%v_t(i,j) - half
-      end do
-    end do
-
-    call mdr%update_v
-    sfac = sqrt(mdr%ndof*mdr%T_ext/mdr%sumv2)
-    mdr%v_t = sfac*mdr%v_t ! Scale velocities according to T_ext
+    ! initialise velocity
+    call mdr%init_velocities
+    call mdr%get_temperature
 
     write(*,*)
     write(*,'(2x,a)') "Initial velocities:"
@@ -156,16 +156,72 @@ contains
     write(*,*)
     call mdr%get_kinetic_energy
     call mdr%get_force_and_energy
-    mdr%f_t = mdr%f_t_dt
 
     write(*,*)
     write(*,'(2x,a)') "Initial forces:"
     do i=1,mdr%nat
-      write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%f_t(i,:)
+      write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%f(i,:)
     end do
     write(*,*)
 
   end subroutine init_md
+
+  subroutine init_velocities(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    ! local variables
+    real(double)                    :: sfac
+    integer                         :: i, j
+
+    ! initialise rng
+    call init_rand
+
+
+    ! initialise velocities w/ uniform random distribution
+    do i=1,mdr%nat
+      do j=1,3
+        call rand(mdr%v_t(i,j))
+        mdr%v_t(i,j) = mdr%v_t(i,j) - half
+      end do
+    end do
+
+    call mdr%update_v(mdr%remove_com_v)
+    sfac = sqrt(mdr%ndof*mdr%T_ext/mdr%sumv2)
+    mdr%v_t = sfac*mdr%v_t ! Scale velocities according to T_ext
+  end subroutine init_velocities
+
+  ! Reomve centre of mass velocity, compute velocity and sum of velocities
+  ! squared
+  subroutine update_v(mdr, remove_com_v)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+    logical, intent(in)             :: remove_com_v
+
+    ! local variables
+    integer :: i
+
+    ! update the COM velocity
+    do i=1,3
+      mdr%sumv(i) = sum(mdr%v_t(:,i))
+    end do
+    mdr%sumv = mdr%sumv/mdr%nat
+
+    ! remove COM velocity
+    if (remove_com_v .eqv. .true.) then
+      do i=1,mdr%nat
+        mdr%v_t(i,:) = mdr%v_t(i,:) - mdr%sumv
+      end do
+    end if
+
+    ! update the sum of the squared velocity (for kinetic energy etc)
+    mdr%sumv2 = zero
+    do i=1,mdr%nat
+      mdr%sumv2 = mdr%sumv2 + sum(mdr%v_t(i,:)**2)
+    end do
+  end subroutine update_v
 
   ! Compute the potential energy and force on each atom
   subroutine get_force_and_energy(mdr)
@@ -178,8 +234,8 @@ contains
     real(double), dimension(3)      :: r_ij_cart
     real(double)                    :: mod_r_ij, mod_f, pe
 
-    mdr%f_t_dt = zero
-    mdr%pe_t = zero
+    mdr%pe = zero
+    mdr%f = zero
 
     do iat=1,mdr%nat
       do jat=1,mdr%nat
@@ -191,17 +247,15 @@ contains
         mod_r_ij = modulus(r_ij_cart)
         if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
           r_ij_cart = norm(r_ij_cart)
-          call mdr%pp%lj_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
+          call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
                                           mod_f, pe)
-          ! mod_f = -mdr%pp%lj_force(mod_r_ij, s_i, s_j, mdr%shift)
-          mdr%f_t_dt(iat,:) = mdr%f_t_dt(iat,:) + mod_f*r_ij_cart
-          ! pe = mdr%pp%lj_energy(mod_r_ij, s_i, s_j, mdr%shift)
-          mdr%pe_t = mdr%pe_t + pe
+          mdr%f(iat,:) = mdr%f(iat,:) + mod_f*r_ij_cart
+          mdr%pe = mdr%pe + pe
         end if
       end do
     end do
-    mdr%pe_t = mdr%pe_t*half
-    write(*,'("  Potential energy = ",e16.8)') mdr%pe_t
+    mdr%pe = mdr%pe*half
+    write(*,'("  Potential energy = ",e16.8)') mdr%pe
   end subroutine get_force_and_energy
 
   ! Compute the kinetic energy
@@ -213,8 +267,8 @@ contains
     ! local variables
     integer   :: i
 
-    mdr%ke_t = mdr%sumv2/two
-    write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke_t
+    mdr%ke = mdr%sumv2/two
+    write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke
 
   end subroutine get_kinetic_energy
 
@@ -224,8 +278,8 @@ contains
     ! passed variables
     class(type_md), intent(inout)   :: mdr
 
-    mdr%T_int_t = mdr%sumv2/mdr%ndof
-    write(*,'("  Temperature      = ",f16.8)') mdr%T_int_t
+    mdr%T_int = mdr%sumv2/mdr%ndof
+    write(*,'("  Temperature      = ",f16.8)') mdr%T_int
   end subroutine get_temperature
 
   ! Compute the pressure using the virial
@@ -249,7 +303,7 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     if (mdr%iprint == 0) write(*,'(a)') "Velocity Verlet velocity dt/2 update"
-    mdr%v_t_dt = mdr%v_t + mdr%dt*half*(mdr%f_t + mdr%f_t_dt)
+    mdr%v_t_dt = mdr%v_t + mdr%dt*half*mdr%f
 
   end subroutine vVerlet_v_half
 
@@ -275,89 +329,67 @@ contains
     integer, intent(in)             :: s_start, s_end
 
     ! local variables
-    integer       :: s, traj_unit, dump_unit
+    integer       :: s, traj_unit, dump_unit, stat_unit
     real(double)  :: total_energy
     logical       :: d
 
     traj_unit = 101
     dump_unit = 102
+    stat_unit = 103
     s = 0
 
     open(unit=traj_unit, file=mdr%position_file, status='replace')
     open(unit=dump_unit, file=mdr%dump_file, status='replace')
+    open(unit=stat_unit, file=mdr%stat_file, status='replace')
     call mdr%p_t%write_xsf(traj_unit, .true., 1, (s_end/mdr%dump_freq)+1)
+    call mdr%stat_dump(stat_unit, s)
     if (mdr%dump .eqv. .true.) then
       if (mdr%dump_freq == 0) call mdr%md_dump(dump_unit, s)
     end if
+
+    ! Main MD loop
     do s=s_start,s_end
       d = .false.
       if (mod(s,mdr%dump_freq) == 0) d = .true.
       write(*,*)
-      write(*,'("MD step ",i6," of ",i6)')  s, s_end
+      write(*,'("MD step ",i10," of ",i10)')  s, s_end
       call mdr%vVerlet_v_half
+      mdr%v_t = mdr%v_t_dt
+
+      ! velocity Verlet algorithm
       call mdr%vVerlet_r
       if (d .eqv. .true.) then
         call mdr%p_t_dt%write_xsf(traj_unit, .true., s+1, s_end+1)
       end if
       call mdr%get_force_and_energy
       call mdr%vVerlet_v_half
-      call mdr%update_v
+
+      ! Update arrays and thermodyanmics quantities
+      mdr%v_t = mdr%v_t_dt
+      call mdr%update_v(mdr%remove_com_v)
       call mdr%get_kinetic_energy
       write(*,'("  Total energy     = ",e16.8)') total_energy
       call mdr%get_temperature
-      total_energy = mdr%ke_t + mdr%pe_t
-      if (mdr%dump .eqv. .true.) then
-        if (d .eqv. .true.) call mdr%md_dump(dump_unit, s)
-      end if
+      total_energy = mdr%ke + mdr%pe
       mdr%p_t%rcart = mdr%p_t_dt%rcart
       if (mdr%ensemble == 'npt' .or. mdr%ensemble == 'nph') then
         mdr%p_t%h = mdr%p_t_dt%h
       end if
-      mdr%v_t = mdr%v_t_dt
-      mdr%f_t = mdr%f_t_dt
-      if (d .eqv. .true.) then
-        call flush(traj_unit)
-        call flush(dump_unit)
+
+      call mdr%stat_dump(stat_unit, s)
+      if (mdr%dump .eqv. .true.) then
+        if (d .eqv. .true.) then
+          call mdr%md_dump(dump_unit, s)
+          call flush(traj_unit)
+          call flush(dump_unit)
+          call flush(stat_unit)
+        end if
       end if
     end do
     close(traj_unit)
     close(dump_unit)
 
   end subroutine md_run
-
-  ! Reomve centre of mass velocity, compute velocity and sum of velocities
-  ! squared
-  subroutine update_v(mdr)
-
-    ! passed variables
-    class(type_md), intent(inout)   :: mdr
-
-    ! local variables
-    integer :: i
-
-    ! update the COM velocity
-    do i=1,3
-      mdr%sumv(i) = sum(mdr%v_t(:,i))
-    end do
-    mdr%sumv = mdr%sumv/mdr%nat
-
-    do i=1,mdr%nat
-      mdr%sumv2 = mdr%sumv2 + sum(mdr%v_t(i,:)**2)
-    end do
-
-    ! remove COM velocity
-    if (mdr%remove_com_v .eqv. .true.) then
-      do i=1,mdr%nat
-        mdr%v_t(i,:) = mdr%v_t(i,:) - mdr%sumv
-      end do
-    end if
-
-    ! update the sum of the squared velocity (for kinetic energy etc)
-    mdr%sumv2 = zero
-    do i=1,mdr%nat
-      mdr%sumv2 = mdr%sumv2 + sum(mdr%v_t(i,:)**2)
-    end do
-  end subroutine update_v
 
   ! Dump the an atom array (position, force, velocity)
   subroutine dump_atom_arr(mdr, iou, arr)
@@ -401,9 +433,29 @@ contains
     call mdr%dump_atom_arr(iunit, mdr%v_t)
     write(iunit,'(a)') "end velocities"
     write(iunit,'(a)') "forces"
-    call mdr%dump_atom_arr(iunit, mdr%f_t)
+    call mdr%dump_atom_arr(iunit, mdr%f)
     write(iunit,'(a)') "end forces"
 
   end subroutine md_dump
+
+  ! Dump thermodyanmic statistics
+  subroutine stat_dump(mdr, iunit, step)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+    integer, intent(in)             :: iunit
+    integer, intent(in)             :: step
+
+    if (step == 0) then
+      select case (mdr%ensemble)
+      case ('nve')
+        write(iunit,'(a10,4a16)') "step", "potential", "kinetic", "total", "T"
+      end select
+    end if
+    select case (mdr%ensemble)
+    case ('nve')
+      write(iunit,'(i10,4e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, mdr%T_int
+    end select
+  end subroutine stat_dump
 
 end module md_module
