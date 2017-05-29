@@ -71,6 +71,10 @@ contains
 
     allocate(pp%sigma(pp%ns,pp%ns), pp%epsilon(pp%ns,pp%ns), &
              pp%r_cut(pp%ns,pp%ns), pp%species_label(pp%ns))
+    select case(pp%potential_type)
+    case ('morse')
+      allocate(pp%r_e(pp%ns,pp%ns))
+    end select
 
     read(funit,*) pp%species_label
 
@@ -158,7 +162,7 @@ contains
 
     allocate(mo%exp_re(mo%ns,mo%ns), mo%exp_re2(mo%ns,mo%ns), &
              mo%c_f(mo%ns,mo%ns))
-    mo%exp_re = exp(2*mo%sigma*mo%r_e)
+    mo%exp_re = exp(mo%sigma*mo%r_e)
     mo%exp_re2 = mo%exp_re**2
     mo%c_f = two*mo%sigma*mo%epsilon
 

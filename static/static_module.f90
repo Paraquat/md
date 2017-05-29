@@ -60,6 +60,7 @@ contains
     static%species = init_cell%spec_int
 
     write(*,'(a)') "Species and pair potential details:"
+    write(*,'("Pair potential type    ",a)') static%pp%potential_type
     write(*,'("Pair potential cutoff  ",f8.4)') static%pp%r_cut
     write(*,'("Pair potential shift   ",l8)') static%shift
     write(*,'(2x,a)') "Sigma"
@@ -70,6 +71,12 @@ contains
     do i=1,static%nspec
       write(*,'(4x,3f10.6)') static%pp%epsilon(i,:)
     end do
+    if (static%pp%potential_type == "morse") then
+      write(*,'(2x,a)') "r_e"
+      do i=1,static%nspec
+        write(*,'(4x,3f10.6)') static%pp%r_e(i,:)
+      end do
+    end if
     write(*,*)
     write(*,'(2x,a)') "label, species, count"
     do i=1,static%nspec

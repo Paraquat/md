@@ -4,6 +4,7 @@ module rng
 ! wall time.
 
 use datatypes
+use constants
 
 implicit none
 
@@ -51,5 +52,37 @@ subroutine randint(rmin, rmax, ri)
   call rand(rr)
   ri = floor(real(rmax + 1 - rmin, double) * rr) + rmin
 end subroutine randint
+
+! two random number generated from a Gaussian distribution
+subroutine boxmuller(sigma, mu, y1, y2)
+  real(double), intent(in)  :: sigma, mu
+  real(double), intent(out) :: y1, y2
+  real(double)              :: x1, x2
+
+  call rand(x1)
+  call rand(x2)
+  y1 = sqrt(-two*log(x1))*cos(twopi*x2)
+  y2 = sqrt(-two*log(x1))*sin(twopi*x2)
+end subroutine boxmuller
+
+! polar version of Box-Muller (no sine/cosine calls)
+subroutine boxmuller_polar(sigma, mu, y1, y2)
+  real(double), intent(in)  :: sigma, mu
+  real(double), intent(out) :: y1, y2
+  real(double)              :: x1, x2, w
+
+  do
+    call rand(x1)
+    call rand(x2)
+    y1 = two*x1-one
+    y2 = two*x2-one
+    w = y1**2 + y2**2
+    if (w < 1.0) exit
+  end do
+  w = sqrt(-two*log(w)/w)
+  y1 = y1*w*sigma + mu
+  y2 = y2*w*sigma + mu
+
+end subroutine boxmuller_polar
 
 end module rng

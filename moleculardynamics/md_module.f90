@@ -17,7 +17,7 @@ type type_md
   character(3)    :: ensemble
   integer         :: nstep, nspec, nat, ndof, iprint, dump_freq
   logical         :: shift, remove_com_v, dump
-  character(40)   :: position_file, dump_file, stat_file, therm_type
+  character(40)   :: position_file, dump_file, stat_file, therm_type, init_distr
   integer, allocatable, dimension(:)          :: species
   real(double), allocatable, dimension(:,:)   :: mass
   real(double), allocatable, dimension(:,:)   :: v_t, v_t_dt
@@ -38,6 +38,7 @@ type type_md
     procedure :: vVerlet_v_half
     procedure :: vVerlet_r
     procedure :: md_run
+    procedure :: fire
     procedure :: dump_atom_arr
     procedure :: md_dump
     procedure :: stat_dump
@@ -47,7 +48,7 @@ contains
 
   ! Initialise variables/velocities/allocate matrices for MD run
   subroutine init_md(mdr, init_cell, pp, init_cell_cart, ensemble, nstep, dt, &
-                     T_ext, shift, remove_com_v)
+                     T_ext, vdistr, shift, remove_com_v)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -58,6 +59,7 @@ contains
     real(double)                    :: dt
     real(double)                    :: T_ext
     logical, intent(in)             :: init_cell_cart
+    character(40), intent(in)       :: vdistr
     logical, intent(in)             :: shift
     logical, intent(in)             :: remove_com_v
 
@@ -80,6 +82,7 @@ contains
     mdr%nat = init_cell%nat
     mdr%nstep = nstep
     mdr%dt = dt
+    mdr%init_distr = vdistr
     mdr%T_ext = T_ext
     mdr%shift = shift
     mdr%remove_com_v = remove_com_v
@@ -144,7 +147,7 @@ contains
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-1
 
     ! initialise velocity
-    call mdr%init_velocities
+    call mdr%init_velocities(mdr%init_distr)
     call mdr%get_temperature
 
     write(*,*)
@@ -166,26 +169,50 @@ contains
 
   end subroutine init_md
 
-  subroutine init_velocities(mdr)
+  subroutine init_velocities(mdr, distr)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
+    character(40), intent(in)       :: distr
 
     ! local variables
-    real(double)                    :: sfac
-    integer                         :: i, j
+    real(double)                    :: sfac, sigma, mu, z1, z2
+    integer                         :: i, j, k
+    real(double), allocatable, dimension(:) :: rn
 
     ! initialise rng
     call init_rand
 
-
     ! initialise velocities w/ uniform random distribution
-    do i=1,mdr%nat
-      do j=1,3
-        call rand(mdr%v_t(i,j))
-        mdr%v_t(i,j) = mdr%v_t(i,j) - half
+    select case (distr)
+    case ('uniform')
+      do i=1,mdr%nat
+        do j=1,3
+          call rand(mdr%v_t(i,j))
+          mdr%v_t(i,j) = mdr%v_t(i,j) - half
+        end do
       end do
-    end do
+    case ('maxwell-boltzmann')
+      allocate(rn(3*mdr%nat))
+      sigma = sqrt(mdr%T_ext/two)
+      mu = zero
+      i = 1
+      do
+        call boxmuller_polar(sigma, mu, z1, z2)
+        if (i <= 3*mdr%nat) rn(i) = z1
+        if (i <= 3*mdr%nat) rn(i) = z2
+        i = i+2
+        if (i > mdr%nat) exit
+      end do
+      k = 1
+      do i=1,mdr%nat
+        do j=1,3
+          mdr%v_t(i,j) = rn(k)
+          k = k+1
+        end do
+      end do
+      deallocate(rn)
+    end select
 
     call mdr%update_v(mdr%remove_com_v)
     sfac = sqrt(mdr%ndof*mdr%T_ext/mdr%sumv2)
@@ -201,7 +228,7 @@ contains
     logical, intent(in)             :: remove_com_v
 
     ! local variables
-    integer :: i
+    integer                         :: i
 
     ! update the COM velocity
     do i=1,3
@@ -388,8 +415,33 @@ contains
     end do
     close(traj_unit)
     close(dump_unit)
+    close(stat_unit)
 
   end subroutine md_run
+
+  ! Perform geometry optimisation using FIRE
+  subroutine fire(mdr, alpha)
+
+    ! passed variables
+    class(type_md), intent(inout)             :: mdr
+    real(double) , intent(in)                 :: alpha ! F/v mixing paramter
+
+    ! local variables
+    real(double)                              :: p, norm_v, norm_f
+    integer                                   :: i
+
+    ! dot product of force and velocity, norms
+    p = sum(mdr%v_t*mdr%f)
+    norm_v = sqrt(sum(mdr%v_t**2))
+    norm_f = sqrt(sum(mdr%f**2))
+
+    if (p > zero) then ! we're still going downhill
+      ! update velocities
+      mdr%v_t = (one - alpha)*mdr%v_t + alpha*norm_v*mdr%f
+    else  ! decrease time step, reset alpha
+    end if
+
+  end subroutine fire
 
   ! Dump the an atom array (position, force, velocity)
   subroutine dump_atom_arr(mdr, iou, arr)
