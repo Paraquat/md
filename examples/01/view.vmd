@@ -1,0 +1,9 @@
+mol new {trajectory.xsf} type {xsf} first 0 last -1 step 1
+mol addrep 0
+display resetview
+animate style Loop
+mol modstyle 0 0 VDW 0.3 15.0
+mol color Name
+mol selection all
+mol material Opaque
+pbc box
