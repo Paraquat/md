@@ -15,17 +15,18 @@ type type_md
   type(type_pairpotential)  :: pp
   type(type_thermostat)     :: th
   character(3)    :: ensemble
-  integer         :: nstep, nspec, nat, ndof, iprint, dump_freq
+  integer         :: nstep, nspec, nat, ndof, iprint, dump_freq, tau_T
   logical         :: shift, remove_com_v, dump
-  character(40)   :: position_file, dump_file, stat_file, therm_type, init_distr
+  character(40)   :: position_file, dump_file, stat_file, therm_type, &
+                     init_distr, units
   integer, allocatable, dimension(:)          :: species
-  real(double), allocatable, dimension(:,:)   :: mass
+  real(double), allocatable, dimension(:)     :: mass
   real(double), allocatable, dimension(:,:)   :: v_t, v_t_dt
   real(double), allocatable, dimension(:,:)   :: f
   real(double), dimension(3,3)                :: p_g_t, p_g_t_dt
   real(double), dimension(3,3)                :: P_int_t, P_int_t_dt, P_ext
   real(double), dimension(3)                  :: sumv
-  real(double)   :: pe, ke, T_int, T_ext, dt, sumv2
+  real(double)   :: pe, ke, T_int, T_ext, dt, sumv2, k_B_md
 
   contains
     procedure :: init_md
@@ -48,7 +49,7 @@ contains
 
   ! Initialise variables/velocities/allocate matrices for MD run
   subroutine init_md(mdr, init_cell, pp, init_cell_cart, ensemble, nstep, dt, &
-                     T_ext, vdistr, shift, remove_com_v)
+                     T_ext, vdistr, shift, remove_com_v, thermo_type)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -60,6 +61,7 @@ contains
     real(double)                    :: T_ext
     logical, intent(in)             :: init_cell_cart
     character(40), intent(in)       :: vdistr
+    character(40), intent(in)       :: thermo_type
     logical, intent(in)             :: shift
     logical, intent(in)             :: remove_com_v
 
@@ -89,18 +91,47 @@ contains
     mdr%dump = .true.
     mdr%dump_freq = 1
     mdr%therm_type = 'none'
+    mdr%units = 'reduced-lj'
+
+    select case (mdr%units)
+    case ('reduced-lj')
+      mdr%k_B_md = one
+    case default
+      mdr%k_B_md = one
+    end select
 
     allocate(mdr%species(mdr%nat))
+    allocate(mdr%mass(mdr%nat))
     allocate(mdr%v_t(mdr%nat,3), mdr%v_t_dt(mdr%nat,3))
     allocate(mdr%f(mdr%nat,3))
     mdr%species = init_cell%spec_int
+    do i=1,mdr%nat
+      mdr%mass(i) = mdr%p_t%mass(mdr%p_t%spec_int(i))
+    end do
+
+    ! ensemble specifics
+    mdr%ndof = 3*mdr%nat
+    select case (ensemble)
+    case ('nvt')
+      ! set ndof for extended lagrangian systems here
+      call mdr%th%init_thermostat(thermo_type, mdr%nat, mdr%nat, mdr%T_ext, &
+                                  mdr%iprint)
+    end select
+    if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
 
     write(*,'(a)') "Simulation parameters:"
     write(*,'("Ensemble               ",a8)') mdr%ensemble
     write(*,'("Number of steps        ",i8)') mdr%nstep
     write(*,'("Time step              ",f8.4)') mdr%dt
-    write(*,'("Initial/external T     ",f8.4)') mdr%T_ext
     write(*,'("Remove COM velocity    ",l8)') mdr%remove_com_v
+    if (mdr%ensemble == 'nvt' .or. mdr%ensemble == 'npt') then
+      write(*,'("Thermostat             ",a16)') mdr%therm_type
+      write(*,'("Thermostat period      ",i8)') mdr%tau_T
+    end if
+    write(*,*)
+    write(*,'(a)') "Initialisation:"
+    write(*,'("Velocity distribution  ",a20)') mdr%init_distr
+    write(*,'("Initial/external T     ",f8.4)') mdr%T_ext
     write(*,*)
     write(*,'(a)') "Species and pair potential details:"
     write(*,'("Pair potential type    ",a)') mdr%pp%potential_type
@@ -121,10 +152,10 @@ contains
       end do
     end if
     write(*,*)
-    write(*,'(2x,a)') "label, species, count"
+    write(*,'(2x,3a8,a10)') "label", "species", "count", "mass"
     do i=1,mdr%nspec
-      write(*,'(4x,i4,a4,i8)') mdr%p_t%spec_int(i), mdr%p_t%spec(i), &
-                               mdr%p_t%spec_count(i)
+      write(*,'(2x,i8,a8,i8,f10.4)') mdr%p_t%spec_int(i), mdr%p_t%spec(i), &
+                               mdr%p_t%spec_count(i), mdr%p_t%mass(i)
     end do
     write(*,*)
     write(*,'(2x,a)') "Initial unit cell:"
@@ -137,18 +168,8 @@ contains
       write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%p_t%rcart(i,:)
     end do
 
-    ! ensemble specifics
-    select case (ensemble)
-    case ('nve')
-      mdr%ndof = 3*mdr%nat
-    case ('nvt')
-      call mdr%th%init_thermostat(mdr%therm_type, mdr%nat, mdr%nat, mdr%T_ext)
-    end select
-    if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-1
-
     ! initialise velocity
     call mdr%init_velocities(mdr%init_distr)
-    call mdr%get_temperature
 
     write(*,*)
     write(*,'(2x,a)') "Initial velocities:"
@@ -215,8 +236,16 @@ contains
     end select
 
     call mdr%update_v(mdr%remove_com_v)
-    sfac = sqrt(mdr%ndof*mdr%T_ext/mdr%sumv2)
+    write(*,'(a)') "Before rescaling:"
+    call mdr%get_kinetic_energy
+    call mdr%get_temperature
+    sfac = sqrt(mdr%T_ext/mdr%T_int)
+    write(*,*)
+    ! sfac = sqrt(mdr%ndof*mdr%T_ext/mdr%sumv2)
     mdr%v_t = sfac*mdr%v_t ! Scale velocities according to T_ext
+    write(*,'(a)') "After rescaling:"
+    call mdr%get_kinetic_energy
+    call mdr%get_temperature
   end subroutine init_velocities
 
   ! Reomve centre of mass velocity, compute velocity and sum of velocities
@@ -294,7 +323,11 @@ contains
     ! local variables
     integer   :: i
 
-    mdr%ke = mdr%sumv2/two
+    mdr%ke = zero
+    do i=1,mdr%nat
+      mdr%ke = mdr%ke + mdr%mass(i)*sum(mdr%v_t(i,:)**2)
+    end do
+    mdr%ke = mdr%ke/two
     write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke
 
   end subroutine get_kinetic_energy
@@ -305,7 +338,7 @@ contains
     ! passed variables
     class(type_md), intent(inout)   :: mdr
 
-    mdr%T_int = mdr%sumv2/mdr%ndof
+    mdr%T_int = two*mdr%ke/mdr%k_B_md/real(mdr%ndof, double)
     write(*,'("  Temperature      = ",f16.8)') mdr%T_int
   end subroutine get_temperature
 
@@ -329,8 +362,13 @@ contains
     ! passed variables
     class(type_md), intent(inout)   :: mdr
 
+    ! local variables
+    integer                         :: i
+
     if (mdr%iprint == 0) write(*,'(a)') "Velocity Verlet velocity dt/2 update"
-    mdr%v_t_dt = mdr%v_t + mdr%dt*half*mdr%f
+    do i=1,mdr%nat
+      mdr%v_t_dt(i,:) = mdr%v_t(i,:) + mdr%dt*half*mdr%f(i,:)/mdr%mass(i)
+    end do
 
   end subroutine vVerlet_v_half
 
@@ -393,7 +431,16 @@ contains
 
       ! Update arrays and thermodyanmics quantities
       mdr%v_t = mdr%v_t_dt
+
       call mdr%update_v(mdr%remove_com_v)
+
+      ! Thermostat: velocity update
+      if (mdr%ensemble == 'nvt' .or. mdr%ensemble == 'npt') then
+        if (mod(s,mdr%tau_T) == 0) then
+          call mdr%th%propagate_thermostat(mdr%T_int, mdr%v_t)
+        end if
+      end if
+
       call mdr%get_kinetic_energy
       write(*,'("  Total energy     = ",e16.8)') total_energy
       call mdr%get_temperature

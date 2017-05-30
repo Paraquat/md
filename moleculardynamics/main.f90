@@ -25,8 +25,9 @@ call pp%init_pp(opts%ppfile, opts%shift)
 call init_cell%read_cell(opts%sfile)
 
 call mdr%init_md(init_cell, pp, opts%cart, opts%ensemble, pp%ns, opts%dt, &
-                 opts%T_ext, init_distr, opts%shift, opts%comv)
+                 opts%T_ext, init_distr, opts%shift, opts%comv, opts%ttype)
 mdr%dump_freq = opts%dump_freq
+mdr%tau_T = opts%tau_T
 call mdr%md_run(1,opts%nsteps)
 
 end program md

@@ -8,76 +8,68 @@ implicit none
 
 type type_thermostat
 
-  real(double)          :: sumv2, T_int, T_ext
-  integer               :: nat, ndof
+  real(double)          :: T_ext
+  integer               :: nat, ndof, iprint
   character(40)         :: th_type
 
 contains
 
   procedure :: init_thermostat
-  procedure :: get_T
   procedure :: velocity_rescale
+  procedure :: propagate_thermostat
 
 end type type_thermostat
 
 contains
 
   ! Initialise the thermostat
-  subroutine init_thermostat(th, th_type, nat, ndof, T_ext)
+  subroutine init_thermostat(th, th_type, nat, ndof, T_ext, iprint)
 
     ! passed variables
     class(type_thermostat), intent(inout)     :: th
     character(40), intent(in)                 :: th_type
-    integer, intent(in)                       :: nat, ndof
+    integer, intent(in)                       :: nat, ndof, iprint
     real(double), intent(in)                  :: T_ext ! target temperature
 
     th%th_type = th_type
     th%nat = nat
     th%ndof = ndof
     th%T_ext = T_ext
+    th%iprint = iprint
 
   end subroutine init_thermostat
 
-  ! Compute the temperature
-  subroutine get_T(th, sumv2)
-
-    ! passed variables
-    class(type_thermostat), intent(inout)     :: th
-    real(double), intent(in)                  :: sumv2
-
-    th%T_int = sumv2/th%ndof
-  end subroutine get_T
-
   ! Isokinetic thermostat: maintain temperature by rescaling velocities by
   ! sqrt(T_int/T_ext) every tau_T steps
-  subroutine velocity_rescale(th, v, sumv2)
+  subroutine velocity_rescale(th, T_int, v)
 
     ! passed variables
     class(type_thermostat), intent(inout)       :: th
     real(double), dimension(:,:), intent(inout) :: v
-    real(double), intent(in)                    :: sumv2
+    real(double), intent(in)                    :: T_int
 
     ! local variables
     integer       :: i
     real(double)  :: lambda
 
-    call th%get_T(sumv2)
-    lambda = sqrt(th%T_ext/th%T_int)
+    lambda = sqrt(th%T_ext/T_int)
     v = v*lambda
+    if (th%iprint == 0) write(*,'("Velocity rescale, lambda = ",f8.4)') lambda
   end subroutine velocity_rescale
 
   ! Update the thermostat
-  subroutine propagate_thermostat(th, v, sumv2)
+  subroutine propagate_thermostat(th, T_int, v)
 
     ! passed variables
     class(type_thermostat), intent(inout)       :: th
     real(double), dimension(:,:), intent(inout) :: v
-    real(double), intent(in)                    :: sumv2
+    real(double), intent(in)                    :: T_int
 
-  select case(th%th_type)
-  case ('velocity_rescale')
-    call th%velocity_rescale(v, sumv2)
-  end select
+    if (th%iprint == 0) write(*,'(a)') "Propagating thermostat"
+    select case(th%th_type)
+    case ('velocity_rescale')
+      call th%velocity_rescale(T_int, v)
+    end select
 
   end subroutine propagate_thermostat
 

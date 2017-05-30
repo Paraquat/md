@@ -16,5 +16,6 @@ module constants
   real(double), parameter     :: deg2rad = one/rad2deg
   real(double), parameter     :: small = 1.0E-8_double
   real(double), parameter     :: k_B = 1.3806485279E-23_double
+  real(double), parameter     :: q_e = 1.602176620898E-19_double
 
 end module constants

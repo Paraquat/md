@@ -13,11 +13,13 @@ type type_cmdline
   character(40)       :: ppfile = 'pp.in'
   character(40)       :: sfile = 'cell.in'
   character(40)       :: outfile = 'md.out'
+  character(40)       :: ttype = 'velocity_rescale'
   character(3)        :: ensemble = 'nve'
   real(double)        :: dt
   real(double)        :: T_ext
   integer             :: nsteps
   integer             :: dump_freq
+  integer             :: tau_T = 1
   logical             :: shift = .false.
   logical             :: comv = .false.
   logical             :: cart = .false.
@@ -49,6 +51,8 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-cv, --comv     [comv]      remove COM velocity (default F)'
   write(*,'(a)') '-c,  --cart     [cart]      Input coordinates are Cartesian (default F)'
   write(*,'(a)') '-d,  --dumpfreq [freq]      Frequency of dump in time steps'
+  write(*,'(a)') '-th, --thermo   [ttype]     Thermostat type'
+  write(*,'(a)') '-tT, --tau_T    [tau_T]     Frequency of thermostate propagation in time steps'
 
 end subroutine print_help
 
@@ -106,6 +110,14 @@ subroutine get_args(cmdl)
     case ('-d', '--dumpfreq')
       call get_command_argument(i+1, arg)
       read(arg,*) cmdl%dump_freq
+      i=i+2
+    case ('-tT', '--tau_T')
+      call get_command_argument(i+1, arg)
+      read(arg,*) cmdl%tau_T
+      i=i+2
+    case ('-th', '--thermo')
+      call get_command_argument(i+1, arg)
+      read(arg,*) cmdl%ttype
       i=i+2
     case ('-s', '--shift')
       cmdl%shift=.true.
