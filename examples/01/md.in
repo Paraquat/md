@@ -1,0 +1,10 @@
+ensemble    nve
+dt          0.001
+nsteps      10000
+natoms      64
+dump_freq   10
+comv        T
+cart        F
+shift       T
+T_ext       0.1
+v_distr     uniform

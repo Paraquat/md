@@ -37,6 +37,7 @@ subroutine print_help(cmdl)
   class(type_cmdline)           :: cmdl
 
   write(*,'(a,a,a)') 'Usage: ', trim(cmdl%exe), ' [OPTIONS]'
+  write(*,'(a)') 'Will look for md.in if no options are given'
   write(*,*)
   write(*,'(a)') 'Mandatory arguments:'
   write(*,'(a)') '-ns, --nsteps   [nsteps]    number of md steps'
