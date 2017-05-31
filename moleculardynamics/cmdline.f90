@@ -14,6 +14,7 @@ type type_cmdline
   character(40)       :: sfile = 'cell.in'
   character(40)       :: outfile = 'md.out'
   character(40)       :: ttype = 'velocity_rescale'
+  character(40)       :: init_distr = 'uniform'
   character(3)        :: ensemble = 'nve'
   real(double)        :: dt
   real(double)        :: T_ext
@@ -56,9 +57,10 @@ subroutine print_help(cmdl)
 
 end subroutine print_help
 
-subroutine get_args(cmdl)
+subroutine get_args(cmdl, args)
 
   class(type_cmdline)           :: cmdl
+  logical, intent(out)          :: args
 
   integer                       :: i, j
   character(40)                 :: arg
@@ -68,72 +70,74 @@ subroutine get_args(cmdl)
 
   if (command_argument_count() == 0) then
     call cmdl%print_help()
-    stop "No command line arguments."
+    write(*,"(a)") "No command line arguments."
+    args = .false.
+  else
+    args = .true.
+    i=1
+    do while (i .le. command_argument_count())
+      call get_command_argument(i, arg)
+
+      select case (arg)
+      case ('-h', '--help')
+        call cmdl%print_help()
+        stop
+      case ('-ns', '--nsteps')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%nsteps
+        i=i+2
+      case ('-dt', '--timestep')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%dt
+        i=i+2
+      case ('-T', '--temp')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%T_ext
+        i=i+2
+      case ('-pp', '--ppfile')
+        call get_command_argument(i+1, arg)
+        cmdl%ppfile=trim(arg)
+        i=i+2
+      case ('-i', '--sfile')
+        call get_command_argument(i+1, arg)
+        cmdl%sfile=trim(arg)
+        i=i+2
+      case ('-o', '--out')
+        call get_command_argument(i+1, arg)
+        cmdl%outfile=trim(arg)
+        i=i+2
+      case ('-e', '--ensemble')
+        call get_command_argument(i+1, arg)
+        cmdl%ensemble=trim(arg)
+        i=i+2
+      case ('-d', '--dumpfreq')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%dump_freq
+        i=i+2
+      case ('-tT', '--tau_T')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%tau_T
+        i=i+2
+      case ('-th', '--thermo')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%ttype
+        i=i+2
+      case ('-s', '--shift')
+        cmdl%shift=.true.
+        i=i+1
+      case ('-cv', '--comv')
+        cmdl%comv=.true.
+        i=i+1
+      case ('-c', '--cart')
+        cmdl%cart=.true.
+        i=i+1
+      case default
+        write(*,'(a,a,/)') 'Unrecognised command line option: ', arg
+        call cmdl%print_help()
+        stop
+      end select
+    end do
   end if
-
-  i=1
-  do while (i .le. command_argument_count())
-    call get_command_argument(i, arg)
-
-    select case (arg)
-    case ('-h', '--help')
-      call cmdl%print_help()
-      stop
-    case ('-ns', '--nsteps')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%nsteps
-      i=i+2
-    case ('-dt', '--timestep')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%dt
-      i=i+2
-    case ('-T', '--temp')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%T_ext
-      i=i+2
-    case ('-pp', '--ppfile')
-      call get_command_argument(i+1, arg)
-      cmdl%ppfile=trim(arg)
-      i=i+2
-    case ('-i', '--sfile')
-      call get_command_argument(i+1, arg)
-      cmdl%sfile=trim(arg)
-      i=i+2
-    case ('-o', '--out')
-      call get_command_argument(i+1, arg)
-      cmdl%outfile=trim(arg)
-      i=i+2
-    case ('-e', '--ensemble')
-      call get_command_argument(i+1, arg)
-      cmdl%ensemble=trim(arg)
-      i=i+2
-    case ('-d', '--dumpfreq')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%dump_freq
-      i=i+2
-    case ('-tT', '--tau_T')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%tau_T
-      i=i+2
-    case ('-th', '--thermo')
-      call get_command_argument(i+1, arg)
-      read(arg,*) cmdl%ttype
-      i=i+2
-    case ('-s', '--shift')
-      cmdl%shift=.true.
-      i=i+1
-    case ('-cv', '--comv')
-      cmdl%comv=.true.
-      i=i+1
-    case ('-c', '--cart')
-      cmdl%cart=.true.
-      i=i+1
-    case default
-      write(*,'(a,a,/)') 'Unrecognised command line option: ', arg
-      call cmdl%print_help()
-      stop
-    end select
-  end do
 
 end subroutine get_args
 

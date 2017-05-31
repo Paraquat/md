@@ -572,6 +572,11 @@ contains
       write(iunit,'(3f12.6)') mdr%p_t%h(i,:)
     end do
     write(iunit,'(a)') "end cell_vectors"
+    write(iunit,'(a)') "stress_tensor"
+    do i=1,3
+      write(iunit,'(3f12.6)') mdr%S_int(i,:)
+    end do
+    write(iunit,'(a)') "end stress_tensor"
     write(iunit,'(a)') "positions"
     call mdr%dump_atom_arr(iunit, mdr%p_t%rcart)
     write(iunit,'(a)') "end positions"
@@ -595,12 +600,13 @@ contains
     if (step == 0) then
       select case (mdr%ensemble)
       case ('nve')
-        write(iunit,'(a10,4a16)') "step", "potential", "kinetic", "total", "T"
+        write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
       end select
     end if
     select case (mdr%ensemble)
     case ('nve')
-      write(iunit,'(i10,4e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, mdr%T_int
+      write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &
+                                  mdr%T_int, mdr%P_int
     end select
   end subroutine stat_dump
 
