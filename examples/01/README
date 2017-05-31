@@ -2,6 +2,13 @@
 typical chemical bond-like characteristic length. Epsilon = 5.0 to prevent
 melting at T=0.1.
 
-Run with
+Run with:
 
 md -ns 10000 -dt 0.001 -e nve -T 0.1 -cv -d 10 --shift
+
+Visualise xsf trajectory using:
+
+vmd -e view.vmd
+
+(assuming vmd is in your $PATH)
+
