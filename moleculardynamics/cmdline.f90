@@ -18,7 +18,7 @@ type type_cmdline
   real(double)        :: dt
   real(double)        :: T_ext
   integer             :: nsteps
-  integer             :: dump_freq
+  integer             :: dump_freq = 1
   integer             :: tau_T = 1
   logical             :: shift = .false.
   logical             :: comv = .false.

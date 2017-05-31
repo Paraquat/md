@@ -24,9 +24,11 @@ type type_md
   real(double), allocatable, dimension(:,:)   :: v_t, v_t_dt
   real(double), allocatable, dimension(:,:)   :: f
   real(double), dimension(3,3)                :: p_g_t, p_g_t_dt
-  real(double), dimension(3,3)                :: P_int_t, P_int_t_dt, P_ext
+  real(double), dimension(3,3)                :: S_int, S_ext, &
+                                                 virial_ke, virial_tensor
   real(double), dimension(3)                  :: sumv
-  real(double)   :: pe, ke, T_int, T_ext, dt, sumv2, k_B_md
+  real(double)   :: pe, ke, T_int, T_ext, dt, sumv2, k_B_md, fdotr, P_int, &
+                    P_ext, V
 
   contains
     procedure :: init_md
@@ -36,6 +38,7 @@ type type_md
     procedure :: get_kinetic_energy
     procedure :: get_temperature
     procedure :: get_pressure
+    procedure :: get_stress
     procedure :: vVerlet_v_half
     procedure :: vVerlet_r
     procedure :: md_run
@@ -92,6 +95,7 @@ contains
     mdr%dump_freq = 1
     mdr%therm_type = 'none'
     mdr%units = 'reduced-lj'
+    mdr%V = mdr%p_t%volume()
 
     select case (mdr%units)
     case ('reduced-lj')
@@ -114,8 +118,8 @@ contains
     select case (ensemble)
     case ('nvt')
       ! set ndof for extended lagrangian systems here
-      call mdr%th%init_thermostat(thermo_type, mdr%nat, mdr%nat, mdr%T_ext, &
-                                  mdr%iprint)
+      call mdr%th%init_thermostat(thermo_type, mdr%nat, mdr%ndof, mdr%T_ext, &
+                                  mdr%tau_T, mdr%iprint)
     end select
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
 
@@ -163,6 +167,8 @@ contains
       write(*,'(4x,3f12.6)') mdr%p_t%h(i,:)
     end do
     write(*,*)
+    write(*,'(2x,"Volume = ",f16.6)') mdr%V
+    write(*,*)
     write(*,'(2x,a)') "Initial atomic positions:"
     do i=1,mdr%nat
       write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%p_t%rcart(i,:)
@@ -178,7 +184,6 @@ contains
     end do
 
     write(*,*)
-    call mdr%get_kinetic_energy
     call mdr%get_force_and_energy
 
     write(*,*)
@@ -186,6 +191,8 @@ contains
     do i=1,mdr%nat
       write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%f(i,:)
     end do
+    write(*,*)
+    call mdr%get_pressure
     write(*,*)
 
   end subroutine init_md
@@ -219,6 +226,8 @@ contains
       mu = zero
       i = 1
       do
+        ! Box-Muller transform generates 2 random numbers in a Gaussian
+        ! distribution, so I'm initialising two components at a time.
         call boxmuller_polar(sigma, mu, z1, z2)
         if (i <= 3*mdr%nat) rn(i) = z1
         if (i <= 3*mdr%nat) rn(i) = z2
@@ -241,7 +250,6 @@ contains
     call mdr%get_temperature
     sfac = sqrt(mdr%T_ext/mdr%T_int)
     write(*,*)
-    ! sfac = sqrt(mdr%ndof*mdr%T_ext/mdr%sumv2)
     mdr%v_t = sfac*mdr%v_t ! Scale velocities according to T_ext
     write(*,'(a)') "After rescaling:"
     call mdr%get_kinetic_energy
@@ -286,12 +294,14 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     ! local variables
-    integer                         :: iat, jat, s_i, s_j
+    integer                         :: iat, jat, s_i, s_j, mu, nu
     real(double), dimension(3)      :: r_ij_cart
     real(double)                    :: mod_r_ij, mod_f, pe
 
     mdr%pe = zero
     mdr%f = zero
+    mdr%fdotr = zero
+    mdr%virial_tensor = zero
 
     do iat=1,mdr%nat
       do jat=1,mdr%nat
@@ -308,6 +318,16 @@ contains
           mdr%f(iat,:) = mdr%f(iat,:) + mod_f*r_ij_cart
           mdr%pe = mdr%pe + pe
         end if
+        ! compute virial
+        if (jat < iat) then
+          mdr%fdotr = mdr%fdotr + sum(mdr%f(iat,:)*r_ij_cart)
+          do mu=1,3
+            do nu=1,3
+              mdr%virial_tensor(mu,nu) = mdr%virial_tensor(mu,nu) + &
+                                         mdr%f(iat,mu)*r_ij_cart(nu)
+            end do
+          end do
+        end if
       end do
     end do
     mdr%pe = mdr%pe*half
@@ -321,11 +341,18 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     ! local variables
-    integer   :: i
+    integer   :: i, mu, nu
 
     mdr%ke = zero
+    mdr%virial_ke = zero
     do i=1,mdr%nat
       mdr%ke = mdr%ke + mdr%mass(i)*sum(mdr%v_t(i,:)**2)
+      do mu=1,3
+        do nu=1,3
+          mdr%virial_ke(mu,nu) = mdr%virial_ke(mu,nu) + &
+                                 mdr%mass(i)*mdr%v_t(i,mu)*mdr%v_t(i,nu)
+        end do
+      end do
     end do
     mdr%ke = mdr%ke/two
     write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke
@@ -343,7 +370,22 @@ contains
   end subroutine get_temperature
 
   ! Compute the pressure using the virial
+  ! NB only correct in the NVT ensemble. FIX THIS!
   subroutine get_pressure(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    ! use f_ij*r_ij computed from pp_get_force_and_energy
+    mdr%P_int = mdr%nat*mdr%k_B_md*mdr%T_int/mdr%V + mdr%fdotr/three/mdr%V
+    write(*,'("  Virial           = ",f16.8)') mdr%fdotr
+    write(*,'("  Pressure         = ",f16.8)') mdr%P_int
+
+  end subroutine get_pressure
+
+  ! Compute the stress tensor from the virial tensor from get_force_and_energy
+  ! and the kinetic energy from get_kinetic_energy
+  subroutine get_stress(mdr)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -351,10 +393,12 @@ contains
     ! local variables
     integer                         :: i
 
-    do i=1,mdr%nat
+    mdr%S_int = (one/mdr%V)*(mdr%virial_ke + mdr%virial_tensor)
+    write(*,'(2x,a)') "Stress tensor:"
+    do i=1,3
+      write(*,'(4x,3f16.8)') mdr%S_int(i,:)
     end do
-
-  end subroutine get_pressure
+  end subroutine get_stress
 
   ! Velocity Verlet dt/2 step for velocities
   subroutine vVerlet_v_half(mdr)
@@ -444,10 +488,13 @@ contains
       call mdr%get_kinetic_energy
       write(*,'("  Total energy     = ",e16.8)') total_energy
       call mdr%get_temperature
+      call mdr%get_pressure
+      call mdr%get_stress
       total_energy = mdr%ke + mdr%pe
       mdr%p_t%rcart = mdr%p_t_dt%rcart
       if (mdr%ensemble == 'npt' .or. mdr%ensemble == 'nph') then
         mdr%p_t%h = mdr%p_t_dt%h
+        mdr%V = mdr%p_t%volume()
       end if
 
       call mdr%stat_dump(stat_unit, s)
