@@ -2,7 +2,7 @@ ensemble    nve
 dt          0.001
 nsteps      10000
 natoms      64
-dump_freq   10
+dump_freq   1
 comv        T
 cart        F
 shift       T

@@ -7,9 +7,10 @@ file 'md.in'; otherwise run with:
 
 md -ns 10000 -dt 0.001 -e nve -T 0.1 -cv -d 10 --shift
 
-Visualise xsf trajectory using:
+Visualise xsf trajectory using (assuming vmd is in your $PATH):
 
 vmd -e view.vmd
 
-(assuming vmd is in your $PATH)
+Analyse the trajectory, skipping the first 1000 steps with:
 
+md_analysis.py --skip 1000

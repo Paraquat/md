@@ -566,7 +566,7 @@ contains
     ! local variables
     integer                         :: i
 
-    write(iunit,'("step ",i8)') step
+    write(iunit,'("frame ",i8)') step
     write(iunit,'(a)') "cell_vectors"
     do i=1,3
       write(iunit,'(3f12.6)') mdr%p_t%h(i,:)
@@ -586,6 +586,7 @@ contains
     write(iunit,'(a)') "forces"
     call mdr%dump_atom_arr(iunit, mdr%f)
     write(iunit,'(a)') "end forces"
+    write(iunit,'(a)') "end frame"
 
   end subroutine md_dump
 
