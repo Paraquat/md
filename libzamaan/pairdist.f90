@@ -4,13 +4,10 @@ use constants
 use progress
 use cell
 use dataproc
-use trajectory
 use fft
 use datatypes
 
-use, intrinsic :: iso_c_binding
 implicit none
-include 'fftw3.f'
 
 public :: type_pairdist
 
@@ -49,11 +46,8 @@ type type_pairdist
     procedure :: smooth_gr
     procedure :: norm_rdist
     procedure :: get_cumfreq
-    procedure :: rdist_traj
     procedure :: get_sfac_grdft
     procedure :: get_sfac_grfft
-    procedure :: get_sfac_fftw
-    procedure :: get_gr_fftw
     procedure :: sum_sfac
     procedure :: write_gr
     procedure :: write_sq
@@ -325,37 +319,6 @@ subroutine get_cumfreq(pd)
 
 end subroutine get_cumfreq
 
-! Compute g(r) over a MD trajectory traj
-! nsteps = number of MD time steps
-! stride = period between samples for g(r)
-subroutine rdist_traj(pd, traj, nsteps, stride)
-
-  class(type_pairdist), intent(inout)     :: pd
-
-  type(type_traj), intent(in)             :: traj
-  real(double), dimension(:), allocatable :: sq
-
-  type(type_progress)                     :: pbar
-  integer, intent(in)                     :: nsteps, stride
-  integer                                 :: i, nframes
-  character(80)                           :: pbartext
-
-  pd%nsteps=nsteps
-  pbartext="Binning radial distributions over trajectory..."
-  call pbar%init_progress(pd%nsteps,pbartext)
-
-  nframes = 0
-  do i=1,pd%nsteps,stride
-    pd%p%r=traj%r(i,:,:)
-    pd%p%h=traj%h(i,:,:)
-    call pd%update_rdist()
-    nframes=nframes+1
-    call pbar%update_progress(i)
-  end do
-  write(*,*)
-  call pd%norm_rdist(nframes)
-end subroutine rdist_traj
-
 ! Calculate the structure factor via slow discrete Fourier transform of g(r)
 subroutine get_sfac_grdft(pd,nqpt,qmax)
 
@@ -398,87 +361,6 @@ subroutine get_sfac_grfft(pd,nqpt)
 
   call grfft(pd%gr_total,pd%sq_total,pd%nbins,pd%nqpt,pd%sqconst)
 end subroutine get_sfac_grfft
-
-! Calculate the s(q) via Fourier transform of g(r)
-! Use FFTW3
-! THIS IS BROKEN
-subroutine get_sfac_fftw(pd)
-
-  class(type_pairdist), intent(inout)       :: pd
-
-  type(c_ptr)                               :: plan
-  real(c_double), allocatable, dimension(:) :: win, wout
-  integer                                   :: ispec, jspec
-
-  allocate(win(pd%nbins),wout(pd%nbins))
-  pd%nqpt=pd%nbins
-
-  wout = 0.
-  call dfftw_plan_r2r_1d(plan,pd%nbins,win,wout,FFTW_FORWARD,FFTW_ESTIMATE)
-
-  win = pd%gr_total
-  call dfftw_execute_r2r(plan,win,wout)
-
-  if (allocated(pd%sq_total) .eqv. .false.) then
-    allocate(pd%sq_total(pd%nbins))
-  end if
-  if (allocated(pd%sq) .eqv. .false.) then
-    allocate(pd%sq(pd%nbins,pd%p%nspec,pd%p%nspec))
-  end if
-!  pd%sq=0.
-  pd%sq_total = 1. + (4.*pi*pd%rho*pd%delr**2)*wout
-
-  do ispec=1,pd%p%nspec
-    do jspec=ispec,pd%p%nspec
-      win = pd%gr(:,ispec,jspec)
-      call dfftw_execute_r2r(plan,win,wout)
-      pd%sq(:,ispec,jspec) = 1. + (4.*pi*pd%rho*pd%delr**2)*wout
-    end do
-  end do
-
-  call dfftw_destroy_plan(plan)
-  deallocate(win,wout)
-end subroutine get_sfac_fftw
-
-! Calculate g(r) via Fourier transform of s(q)
-! Use FFTW3
-subroutine get_gr_fftw(pd)
-
-  class(type_pairdist), intent(inout)       :: pd
-
-  type(c_ptr)                               :: plan
-  real(c_double), allocatable, dimension(:) :: win, wout
-  integer                                   :: ispec, jspec
-
-  allocate(win(pd%nbins),wout(pd%nbins))
-  pd%nqpt=pd%nbins
-
-  wout = 0.
-  call dfftw_plan_r2r_1d(plan,pd%nbins,win,wout,FFTW_BACKWARD,FFTW_ESTIMATE)
-
-  win = pd%sq_total
-  call dfftw_execute_r2r(plan,win,wout)
-
-  if (allocated(pd%gr_total) .eqv. .false.) then
-    allocate(pd%gr_total(pd%nbins))
-  end if
-  if (allocated(pd%gr) .eqv. .false.) then
-    allocate(pd%gr(pd%nbins,pd%p%nspec,pd%p%nspec))
-  end if
-!  pd%sq=0.
-  pd%gr_total = 1. + (4.*pi*pd%rho*pd%delr**2)*wout
-
-  do ispec=1,pd%p%nspec
-    do jspec=ispec,pd%p%nspec
-      win = pd%sq(:,ispec,jspec)
-      call dfftw_execute_r2r(plan,win,wout)
-      pd%gr(:,ispec,jspec) = 1. + (4.*pi*pd%rho*pd%delr**2)*wout
-    end do
-  end do
-
-  call dfftw_destroy_plan(plan)
-  deallocate(win,wout)
-end subroutine get_gr_fftw
 
 ! Compute the total structure factor from partial structure factors
 subroutine sum_sfac(pd, b)

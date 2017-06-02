@@ -6,4 +6,6 @@ moleculardynamics/md
 moleculardynamics/md.dSYM
 static/static
 static/static.dSYM
+rdf/rdf
+rdf/rdf.dSYM
 __pycache__

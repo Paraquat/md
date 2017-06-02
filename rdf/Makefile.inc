@@ -1,6 +1,6 @@
 # Library paths
-LPATH = -L/home/zamaan/Software/lib -L../libzamaan
-IPATH = -I/home/zamaan/Software/include -I../libzamaan
+LPATH = -L/Users/zamaan/Software/lib -L../libzamaan
+IPATH = -I/Users/zamaan/Software/include -I../libzamaan
 
 # Uncomment for debugging
 DEBUG = -O0 -g -fbounds-check

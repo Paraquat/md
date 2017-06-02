@@ -42,7 +42,6 @@ type type_cell
     procedure :: read_poscar
     procedure :: read_lammps
     procedure :: read_xsf
-    procedure :: write_gulp
     procedure :: write_poscar
     procedure :: write_cell
     procedure :: write_lammps
@@ -640,30 +639,7 @@ subroutine read_xsf(p, infilename)
   close(101)
 
   call p%count_species()
-
-  call p%write_gulp(testfile)
 end subroutine read_xsf
-
-! read gulp .res file
-subroutine write_gulp(p, outfile)
-
-  class(type_cell), intent(inout)   :: p
-
-  character(40)                       :: outfile
-  integer                             :: i
-
-  open(101, file=outfile, status="replace")
-  write(101,'(a)') "sing"
-  write(101,'(a)') "vect"
-  write(101,'(3f8.3)') p%h(1,:)
-  write(101,'(3f8.3)') p%h(2,:)
-  write(101,'(3f8.3)') p%h(3,:)
-  write(101,'(a)') "cart"
-  do i = 1, p%nat
-    write(101,'(a,3f10.6)') p%species(i), p%rcart(i,:)
-  end do
-  close(101)
-end subroutine write_gulp
 
 ! write cell to poscar
 subroutine write_poscar(p, filename)

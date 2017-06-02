@@ -3,7 +3,7 @@ include Makefile.inc
 PROG = rdf
 
 #FCFLAGS = -fbackslash
-LDFLAGS = $(LPATH) $(IPATH) -lzamaan  -lfftw3 -llapack -lblas
+LDFLAGS = $(LPATH) $(IPATH) -lzamaan -llapack -lblas
 SRCS = cmdline.f90 main.f90
 OBJS = cmdline.o main.o
 DEBUG = -O0 -g -fbounds-check
