@@ -21,6 +21,7 @@ type type_cmdline
   integer             :: nsteps
   integer             :: dump_freq = 1
   integer             :: tau_T = 1
+  integer             :: n_nhc = 5
   logical             :: shift = .false.
   logical             :: comv = .false.
   logical             :: cart = .false.
@@ -55,6 +56,7 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-d,  --dumpfreq [freq]      Frequency of dump in time steps'
   write(*,'(a)') '-th, --thermo   [ttype]     Thermostat type'
   write(*,'(a)') '-tT, --tau_T    [tau_T]     Frequency of thermostate propagation in time steps'
+  write(*,'(a)') '-nh, --n_nhc    [n_nhc]     Length of Nose-Hoover chain (default 5)'
 
 end subroutine print_help
 
@@ -118,6 +120,10 @@ subroutine get_args(cmdl, args)
       case ('-tT', '--tau_T')
         call get_command_argument(i+1, arg)
         read(arg,*) cmdl%tau_T
+        i=i+2
+      case ('-nh', '--n_nhc')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%n_nhc
         i=i+2
       case ('-th', '--thermo')
         call get_command_argument(i+1, arg)

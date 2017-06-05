@@ -2,9 +2,7 @@
 
 import argparse
 import re
-import sys
 import scipy as sp
-import scipy.stats
 import matplotlib.pyplot as plt
 from frame import Frame
 
@@ -148,10 +146,14 @@ fig1.savefig("stats.pdf", bbox_inches='tight')
 # Parse the dump.out dump file
 nframes = 0
 newframe = True
+nbins = 100
 buf = ""
 time = []
 vacf = []
 msd = []
+stress = []
+sdistr = sp.zeros(nbins, dtype='float')
+vdistr = sp.zeros((nbins,3), dtype='float')
 with open(opts.dumpfile, 'r') as dumpfile:
   while True:
     line = dumpfile.readline()
@@ -171,9 +173,14 @@ with open(opts.dumpfile, 'r') as dumpfile:
         parse_frame(buf,f1)
       f = Frame(natoms, n)
       parse_frame(buf, f)
+      stress.append(f.stress)
       time.append(n*dt)
       vacf.append(f.update_vacf(f1))
       msd.append(f.update_msd(f1))
+      sdistr_tmp, bin_edges = f.update_sdistr(nbins)
+      vdistr_tmp, bin_edges = f.update_vdistr(nbins)
+      sdistr += sdistr_tmp
+      vdistr += vdistr_tmp
       continue
     if newframe:
       buf = ""
@@ -183,8 +190,59 @@ with open(opts.dumpfile, 'r') as dumpfile:
 
 vacf = sp.array(vacf)
 msd = sp.array(msd)
+stress = sp.array(stress)
 time = sp.array(time)
 time = time - time[0]
+vdistr = vdistr/float(nframes)
+sdistr = sdistr/float(nframes)
+
+# Plot the stress
+mean_stress = sp.zeros((3,3))
+for i in range(3):
+  for j in range(3):
+    mean_stress[i,j] = sp.mean(stress[:,i,j])
+plt.figure("Stress")
+fig2, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, sharex=True)
+plt.xlabel("t")
+ax1.set_ylabel("Stress")
+ax2.set_ylabel("Stress")
+plt.xlim((time[0], time[-1]))
+ax1.plot(time, stress[:,0,0], 'r-', label='xx')
+ax1.plot(time, stress[:,1,1], 'g-', label='yy')
+ax1.plot(time, stress[:,2,2], 'b-', label='zz')
+ax1.plot((time[0],time[-1]), (mean_stress[0,0], mean_stress[0,0]), 'r-',
+        label=r'$\langle S_{{xx}} \rangle$ = {0:<10.4f}'.format(mean_stress[0,0]))
+ax1.plot((time[0],time[-1]), (mean_stress[1,1], mean_stress[1,1]), 'g-',
+        label=r'$\langle S_{{yy}} \rangle$ = {0:<10.4f}'.format(mean_stress[1,1]))
+ax1.plot((time[0],time[-1]), (mean_stress[2,2], mean_stress[2,2]), 'b-',
+        label=r'$\langle S_{{zz}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,2]))
+
+ax2.plot(time, stress[:,0,1], 'r-', label='xy')
+ax2.plot(time, stress[:,1,0], 'r--', label='yx')
+ax2.plot(time, stress[:,1,2], 'g-', label='yz')
+ax2.plot(time, stress[:,2,1], 'g--', label='zy')
+ax2.plot(time, stress[:,0,2], 'b-', label='xz')
+ax2.plot(time, stress[:,2,0], 'b--', label='zx')
+ax2.plot((time[0],time[-1]), (mean_stress[0,1], mean_stress[0,1]), 'r-',
+        label=r'$\langle S_{{xy}} \rangle$ = {0:<10.4f}'.format(mean_stress[0,1]))
+ax2.plot((time[0],time[-1]), (mean_stress[1,0], mean_stress[1,0]), 'r--',
+        label=r'$\langle S_{{yx}} \rangle$ = {0:<10.4f}'.format(mean_stress[1,0]))
+ax2.plot((time[0],time[-1]), (mean_stress[0,2], mean_stress[0,2]), 'g-',
+        label=r'$\langle S_{{xz}} \rangle$ = {0:<10.4f}'.format(mean_stress[0,2]))
+ax2.plot((time[0],time[-1]), (mean_stress[2,0], mean_stress[2,0]), 'g--',
+        label=r'$\langle S_{{zx}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,0]))
+ax2.plot((time[0],time[-1]), (mean_stress[1,2], mean_stress[1,2]), 'b-',
+        label=r'$\langle S_{{yz}} \rangle$ = {0:<10.4f}'.format(mean_stress[1,2]))
+ax2.plot((time[0],time[-1]), (mean_stress[2,1], mean_stress[2,1]), 'b--',
+        label=r'$\langle S_{{zy}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,1]))
+ax1.legend(bbox_to_anchor=(1.05,1), loc=2, borderaxespad=0.)
+ax2.legend(bbox_to_anchor=(1.05,1), loc=2, borderaxespad=0.)
+fig2.subplots_adjust(hspace=0)
+plt.setp([a.get_xticklabels() for a in fig1.axes[:-1]], visible=False)
+fig2.savefig("stress.pdf", bbox_inches='tight')
+
+
+# Plot the VACF
 plt.figure("VACF")
 plt.xlabel("t")
 plt.ylabel("C(t)")
@@ -193,6 +251,7 @@ plt.plot(time, vacf)
 plt.plot((0,time[-1]), (0, 0), 'k-')
 plt.savefig("vacf.pdf", bbox_inches='tight')
 
+# Plot the MSD
 plt.figure("MSD")
 plt.xlabel("t")
 plt.ylabel("MSD(t)")
@@ -201,3 +260,15 @@ plt.plot(time, msd)
 plt.plot((0,time[-1]), (0, 0), 'k-')
 plt.ylim(ymin=0)
 plt.savefig("msd.pdf", bbox_inches='tight')
+
+# Plot the velocity distribution
+plt.figure("v_distribution")
+fig3, ((ax1, ax2), (ax3, ax4)) = plt.subplots(nrows=2, ncols=2)
+ax1.hist(sdistr, bins=bin_edges, label='speed')
+ax2.hist(vdistr[:,0], bins=bin_edges, label=r'$v_x$')
+ax3.hist(vdistr[:,1], bins=bin_edges, label=r'$v_y$')
+ax4.hist(vdistr[:,2], bins=bin_edges, label=r'$v_z$')
+plt.savefig("vdistr.pdf", bbox_inches='tight')
+# ax2.plot(bin_edges, vdistr[:,0], 'r-', label=r'$v_x$')
+# ax3.plot(bin_edges, vdistr[:,1], 'g', label=r'$v_y$')
+# ax4.plot(bin_edges, vdistr[:,2], 'b', label=r'$v_z$')

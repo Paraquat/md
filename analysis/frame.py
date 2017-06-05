@@ -19,6 +19,7 @@ class Frame:
     self.E = 0.
     self.T = 0.
     self.P = 0.
+    self.vmax = 1.0
 
   def update_vacf(self, init):
     """Compute the velocity autocorrelation function given the initial frame"""
@@ -31,7 +32,23 @@ class Frame:
     return diff/self.nat
 
   def update_msd(self, init):
+    """Compute the mean squared displacement given the initial frame"""
     diff = sp.zeros((self.nat,3))
     for i in range(self.nat):
       diff[i,:] = self.diff_mic(self.r[i,:], init.r[i,:])
     return sp.sum(diff**2)/self.nat
+
+  def update_vdistr(self, nbins):
+    """Generate the velocity distribution histogram"""
+    vdistr = sp.zeros((nbins,3), dtype='float')
+    for i in range(3):
+      hist, bin_edges = sp.histogram(self.v[:,i], nbins, range=(0,self.vmax))
+      vdistr[:,i] = hist
+    return vdistr, bin_edges
+
+  def update_sdistr(self, nbins):
+    """Generate the speed distribution histogram"""
+    speed = sp.zeros(self.nat, dtype='float')
+    for i in range(self.nat):
+      speed[i] = sp.sum(self.v[i,:]**2)
+    return sp.histogram(speed, nbins, range=(0,self.vmax))

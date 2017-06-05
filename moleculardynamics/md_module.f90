@@ -16,8 +16,9 @@ type type_md
   type(type_thermostat)     :: th
   character(3)    :: ensemble
   integer         :: nstep, nspec, nat, ndof, iprint, dump_freq, tau_T
+  integer         :: n_nhc
   logical         :: shift, remove_com_v, dump
-  character(40)   :: position_file, dump_file, stat_file, therm_type, &
+  character(40)   :: position_file, dump_file, stat_file, thermo_type, &
                      init_distr, units
   integer, allocatable, dimension(:)          :: species
   real(double), allocatable, dimension(:)     :: mass
@@ -28,7 +29,7 @@ type type_md
                                                  virial_ke, virial_tensor
   real(double), dimension(3)                  :: sumv
   real(double)   :: pe, ke, T_int, T_ext, dt, sumv2, k_B_md, fdotr, P_int, &
-                    P_ext, V
+                    P_ext, V, e_nhc
 
   contains
     procedure :: init_md
@@ -93,15 +94,15 @@ contains
     mdr%remove_com_v = remove_com_v
     mdr%dump = .true.
     mdr%dump_freq = 1
-    mdr%therm_type = 'none'
     mdr%units = 'reduced-lj'
     mdr%V = mdr%p_t%volume()
+    mdr%thermo_type = thermo_type
 
     select case (mdr%units)
     case ('reduced-lj')
       mdr%k_B_md = one
     case default
-      mdr%k_B_md = one
+      mdr%k_B_md = k_B
     end select
 
     allocate(mdr%species(mdr%nat))
@@ -115,12 +116,14 @@ contains
 
     ! ensemble specifics
     mdr%ndof = 3*mdr%nat
-    select case (ensemble)
-    case ('nvt')
-      ! set ndof for extended lagrangian systems here
+    ! constant temperature
+    if (mdr%ensemble(3:3) == 't') then
+      ! set ndof for extended lagrangian systems
+      if (mdr%thermo_type == 'nhc') mdr%ndof = mdr%ndof + mdr%n_nhc
       call mdr%th%init_thermostat(thermo_type, mdr%nat, mdr%ndof, mdr%T_ext, &
-                                  mdr%tau_T, mdr%iprint)
-    end select
+                                  mdr%tau_T, mdr%n_nhc, mdr%iprint)
+    end if
+
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
 
     write(*,'(a)') "Simulation parameters:"
@@ -129,8 +132,18 @@ contains
     write(*,'("Time step              ",f8.4)') mdr%dt
     write(*,'("Remove COM velocity    ",l8)') mdr%remove_com_v
     if (mdr%ensemble == 'nvt' .or. mdr%ensemble == 'npt') then
-      write(*,'("Thermostat             ",a16)') mdr%therm_type
+      write(*,'("Thermostat             ",a16)') mdr%thermo_type
       write(*,'("Thermostat period      ",i8)') mdr%tau_T
+      if (mdr%thermo_type == 'nhc') then
+        write(*,'("NH chain length        ",a16)') mdr%n_nhc
+        if (mdr%iprint == 0) then
+        write(*,'(a)') "NHC heat bath parameters:"
+          write(*,'(3a12)') 'xi', 'p_xi', 'Q'
+          do i=1,mdr%n_nhc
+            write(*,'(3f12.4)') mdr%th%xi(i), mdr%th%p_xi(i), mdr%th%Q(i)
+          end do
+        end if
+      end if
     end if
     write(*,*)
     write(*,'(a)') "Initialisation:"
@@ -462,6 +475,13 @@ contains
       if (mod(s,mdr%dump_freq) == 0) d = .true.
       write(*,*)
       write(*,'("MD step ",i10," of ",i10)')  s, s_end
+      if (mod(s,mdr%tau_T) == 0) then
+        if (mdr%ensemble(3:3) == 't') then
+          if (mdr%thermo_type == 'nhc') then
+            call mdr%th%propagate_nhc(mdr%dt, .false., mdr%mass, mdr%v_t)
+          end if
+        end if
+      end if
       call mdr%vVerlet_v_half
       mdr%v_t = mdr%v_t_dt
 
@@ -479,20 +499,31 @@ contains
       call mdr%update_v(mdr%remove_com_v)
 
       ! Thermostat: velocity update
-      if (mdr%ensemble == 'nvt' .or. mdr%ensemble == 'npt') then
-        if (mod(s,mdr%tau_T) == 0) then
-          call mdr%th%propagate_thermostat(mdr%T_int, mdr%v_t)
+      if (mod(s,mdr%tau_T) == 0) then
+        if (mdr%ensemble(3:3) == 't') then
+          if (mdr%thermo_type == 'nhc') then
+            call mdr%th%propagate_nhc(mdr%dt, .true., mdr%mass, mdr%v_t)
+            call mdr%th%get_nhc_energy(mdr%e_nhc)
+          else
+            call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t)
+          end if
         end if
       end if
 
       call mdr%get_kinetic_energy
       write(*,'("  Total energy     = ",e16.8)') total_energy
+      if (mdr%ensemble == 'nvt') then
+        if (mdr%thermo_type == 'nhc') then
+          write(*,'("  NHC energy       = ",e16.8)') mdr%e_nhc
+          write(*,'("  NVT conserved E  = ",e16.8)') mdr%e_nhc + total_energy
+        end if
+      end if
       call mdr%get_temperature
       call mdr%get_pressure
       call mdr%get_stress
       total_energy = mdr%ke + mdr%pe
       mdr%p_t%rcart = mdr%p_t_dt%rcart
-      if (mdr%ensemble == 'npt' .or. mdr%ensemble == 'nph') then
+      if (mdr%ensemble(2:2) == 'p') then
         mdr%p_t%h = mdr%p_t_dt%h
         mdr%V = mdr%p_t%volume()
       end if
@@ -602,12 +633,26 @@ contains
       select case (mdr%ensemble)
       case ('nve')
         write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
+      case ('nvt')
+        if (mdr%thermo_type == 'nhc') then
+          write(iunit,'(a10,6a16)') "step", "pe", "ke", "nhc", "total", "T", "P"
+        else
+          write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
+        end if
       end select
     end if
     select case (mdr%ensemble)
     case ('nve')
       write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &
                                   mdr%T_int, mdr%P_int
+    case ('nvt')
+      if (mdr%thermo_type == 'nhc') then
+        write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
+                                    mdr%pe+mdr%ke+mdr%e_nhc, mdr%T_int, mdr%P_int
+      else
+        write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &
+                                    mdr%T_int, mdr%P_int
+      end if
     end select
   end subroutine stat_dump
 

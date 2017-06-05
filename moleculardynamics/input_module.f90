@@ -30,6 +30,7 @@ module input_module
     character(40)   :: thermo_type = 'velocity_rescale'
     real(double)    :: T_ext                ! external temperature
     integer         :: tau_T = 1            ! thermostat time period
+    integer         :: n_nhc = 5            ! lenght of Nose-Hoover chain
 
     ! Barostat paramters
     real(double)        :: P_ext
@@ -115,6 +116,9 @@ subroutine read_input(inp, filename)
     case ('tau_T')
       read(param,*) inp%tau_T
       write(*,'("tau_T               ",l20)') inp%tau_T
+    case ('n_nhc')
+      read(param,*) inp%n_nhc
+      write(*,'("n_nhc               ",i20)') inp%n_nhc
     case ('P_ext')
       read(param,*) inp%P_ext
       write(*,'("P_ext               ",l20)') inp%P_ext

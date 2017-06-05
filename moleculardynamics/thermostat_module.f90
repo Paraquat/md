@@ -8,29 +8,42 @@ implicit none
 
 type type_thermostat
 
-  real(double)          :: T_ext
+  real(double)          :: T_ext, k_B_md
   integer               :: nat, ndof, iprint
   integer               :: tau_T ! coupling time period of v-rescale thermostat
   character(40)         :: th_type
+  integer                                   :: n_nhc  ! number of nh chains
+  real(double), dimension(:), allocatable   :: xi   ! thermostat k position
+  real(double), dimension(:), allocatable   :: p_xi ! thermostat k momentum
+  real(double), dimension(:), allocatable   :: Q    ! thermostat k mass
 
 contains
 
   procedure :: init_thermostat
   procedure :: velocity_rescale
   procedure :: weak_coupling_t
-  procedure :: propagate_thermostat
+  procedure :: propagate_vr_thermostat
+  procedure :: init_nhc
+  procedure :: propagate_v
+  procedure :: propagate_xi_k
+  procedure :: propagate_p_xi_1
+  procedure :: propagate_p_xi_k_1
+  procedure :: propagate_p_xi_k_2
+  procedure :: propagate_nhc
+  procedure :: get_nhc_energy
 
 end type type_thermostat
 
 contains
 
   ! Initialise the thermostat
-  subroutine init_thermostat(th, th_type, nat, ndof, T_ext, tau_T, iprint)
+  subroutine init_thermostat(th, th_type, nat, ndof, T_ext, tau_T, n_nhc, &
+                             iprint)
 
     ! passed variables
     class(type_thermostat), intent(inout)     :: th
     character(40), intent(in)                 :: th_type
-    integer, intent(in)                       :: nat, ndof, iprint, tau_T
+    integer, intent(in)                       :: nat, ndof, iprint, tau_T, n_nhc
     real(double), intent(in)                  :: T_ext
 
     th%th_type = th_type
@@ -39,6 +52,9 @@ contains
     th%T_ext = T_ext
     th%iprint = iprint
     th%tau_T = tau_T
+    th%k_B_md = one
+    th%n_nhc = 5
+    if (th_type == 'nhc') call th%init_nhc(n_nhc)
 
   end subroutine init_thermostat
 
@@ -76,14 +92,14 @@ contains
   end subroutine weak_coupling_t
 
   ! Update the thermostat
-  subroutine propagate_thermostat(th, T_int, v)
+  subroutine propagate_vr_thermostat(th, T_int, v)
 
     ! passed variables
     class(type_thermostat), intent(inout)       :: th
     real(double), dimension(:,:), intent(inout) :: v
     real(double), intent(in)                    :: T_int
 
-    if (th%iprint == 0) write(*,'(a)') "Propagating thermostat"
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: rescaling velocities"
     select case(th%th_type)
     case ('velocity_rescale')
       call th%velocity_rescale(T_int, v)
@@ -91,6 +107,158 @@ contains
       call th%weak_coupling_t(T_int, v)
     end select
 
-  end subroutine propagate_thermostat
+  end subroutine propagate_vr_thermostat
+
+  ! Initialise the NHC with n_nhc heat baths
+  subroutine init_nhc(th, n_nhc)
+
+    ! passed variables
+    class(type_thermostat), intent(inout) :: th
+    integer, intent(in)                   :: n_nhc
+
+    th%n_nhc = n_nhc
+    allocate(th%xi(n_nhc))
+    allocate(th%p_xi(n_nhc))
+    allocate(th%Q(n_nhc))
+
+    th%xi = zero
+    th%p_xi = zero
+    th%Q = one
+
+  end subroutine init_nhc
+
+  ! Propagate the velocity (coupling with NHC heat bath k=1)
+  subroutine propagate_v(th, dt, v)
+
+    ! passed variables
+    class(type_thermostat), intent(inout)       :: th
+    real(double), dimension(:,:), intent(inout) :: v
+    real(double)                                :: dt
+
+    ! local variables
+    integer                                   :: i
+
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: updating velocities"
+    v = v - th%p_xi(1)/th%Q(1)
+
+  end subroutine propagate_v
+
+  ! propagate xi (this is the same for all k)
+  subroutine propagate_xi_k(th, k, dt)
+
+    ! passed variables
+    class(type_thermostat), intent(inout) :: th
+    integer                               :: k
+    real(double)                          :: dt
+
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: propagating xi"
+    th%xi(k) = th%xi(k) + half*dt*th%p_xi(k)/th%Q(k)
+
+  end subroutine propagate_xi_k
+
+  ! propagate p_xi_1 (k=1 only, couples NHC 1 to the system)
+  subroutine propagate_p_xi_1(th, dt, m, v)
+
+    ! passed variables
+    class(type_thermostat), intent(inout)     :: th
+    real(double), intent(in)                  :: dt
+    real(double), dimension(:,:), intent(in)  :: v
+    real(double), dimension(:), intent(in)    :: m
+
+    ! local variables
+    integer                                   :: i
+    real(double)                              :: ke
+
+    ke = zero
+    do i=1,th%nat
+      ke = ke + m(i) + sum(v(i,:)**2)
+    end do
+
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: propagating p_xi for NHC k=1"
+    th%p_xi(1) = th%p_xi(1) + half*dt*(ke - 3*th%nat*th%k_B_md*th%T_ext)
+
+  end subroutine propagate_p_xi_1
+
+  ! propagate p_xi_k, simple shift step
+  subroutine propagate_p_xi_k_1(th, k, dt)
+
+    ! passed variables
+    class(type_thermostat), intent(inout) :: th
+    integer, intent(in)                   :: k
+    real(double), intent(in)              :: dt
+
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: propagating p_xi linear shift"
+    th%p_xi(k) = th%p_xi(k) + half*dt*((th%p_xi(k-1)**2)/th%Q(k-1) - &
+                 th%k_B_md*th%T_ext)
+
+  end subroutine propagate_p_xi_k_1
+
+  ! propagate p_xi_k, exponential shift step
+  subroutine propagate_p_xi_k_2(th, k, dt)
+
+    ! passed variables
+    class(type_thermostat), intent(inout) :: th
+    integer, intent(in)                   :: k
+    real(double), intent(in)              :: dt
+
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: propagating p_xi exponential shift"
+    th%p_xi(k) = th%p_xi(k)*exp(half*dt*th%p_xi(k+1)/th%Q(k+1))
+
+  end subroutine propagate_p_xi_k_2
+
+  ! Propagate the NHC
+  subroutine propagate_nhc(th, dt, reverse, m, v)
+
+    ! passed variables
+    class(type_thermostat), intent(inout)       :: th
+    real(double), intent(in)                    :: dt
+    logical, intent(in)                         :: reverse
+    real(double), dimension(:), intent(inout)   :: m
+    real(double), dimension(:,:), intent(inout) :: v
+
+    ! local variables
+    integer                                     :: k
+
+    if (th%iprint == 0) write(*,'(a)') "Thermostat: propagating NHC dt/2 update"
+    if (reverse .eqv. .true.) then
+      ! propagate chain starting from NHC heat bath M (end of chain)
+
+      do k=th%n_nhc,1,-1
+        if (k < th%n_nhc) call th%propagate_p_xi_k_2(k,dt)
+        if (k==1) then
+          call th%propagate_p_xi_1(dt, m, v)
+        else
+          call th%propagate_p_xi_k_1(k, dt)
+        end if
+        call th%propagate_xi_k(k, dt)
+      end do
+      call th%propagate_v(dt, v)
+    else
+      ! propagate chain starting from NHC heat bath 1 (coupled to system)
+      call th%propagate_v(dt, v)
+      do k=1,th%n_nhc
+        call th%propagate_xi_k(k, dt)
+        if (k==1) then
+          call th%propagate_p_xi_1(dt, m, v)
+        else
+          call th%propagate_p_xi_k_1(k, dt)
+        end if
+        if (k < th%n_nhc) call th%propagate_p_xi_k_2(k,dt)
+      end do
+    end if
+
+  end subroutine propagate_nhc
+
+  ! Compute the "NHC energy" for monitoring the conserved quantity (KE + PE + NHC energy)
+  subroutine get_nhc_energy(th, nhc_energy)
+
+    ! passed variables
+    class(type_thermostat), intent(inout) :: th
+    real(double), intent(out)             :: nhc_energy
+
+    nhc_energy = half*sum((th%p_xi**2)/th%Q)
+    nhc_energy = nhc_energy + 3*th%nat*th%k_B_md*th%T_ext*th%xi(1)
+    nhc_energy = nhc_energy + th%k_B_md*th%T_ext*sum(th%xi(2:))
+  end subroutine get_nhc_energy
 
 end module thermostat_module
