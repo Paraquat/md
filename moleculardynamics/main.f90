@@ -30,7 +30,7 @@ if (args .eqv. .true.) then
 
   call mdr%init_md(init_cell, pp, opts%cart, opts%ensemble, pp%ns, opts%dt, &
                    opts%T_ext, opts%init_distr, opts%shift, opts%comv, &
-                   opts%ttype)
+                   opts%ttype, opts%tau_T, opts%n_nhc)
   mdr%dump_freq = opts%dump_freq
   mdr%tau_T = opts%tau_T
 else
@@ -41,7 +41,8 @@ else
   call init_cell%read_cell(inp%sfile)
 
   call mdr%init_md(init_cell, pp, opts%cart, inp%ensemble, pp%ns, inp%dt, &
-                   inp%T_ext, inp%v_distr, inp%shift, inp%comv, inp%thermo_type)
+                   inp%T_ext, inp%v_distr, inp%shift, inp%comv, &
+                   inp%thermo_type, inp%tau_T, inp%n_nhc)
   mdr%dump_freq = inp%dump_freq
   mdr%tau_T = inp%tau_T
 end if

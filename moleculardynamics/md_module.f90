@@ -52,8 +52,10 @@ end type type_md
 contains
 
   ! Initialise variables/velocities/allocate matrices for MD run
+  ! TODO: Altogether too many arguments here, fix this.
   subroutine init_md(mdr, init_cell, pp, init_cell_cart, ensemble, nstep, dt, &
-                     T_ext, vdistr, shift, remove_com_v, thermo_type)
+                     T_ext, vdistr, shift, remove_com_v, thermo_type, tau_T, &
+                     n_nhc)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -61,11 +63,13 @@ contains
     type(type_pairpotential), intent(in)  :: pp
     character(3), intent(in)        :: ensemble
     integer, intent(in)             :: nstep
-    real(double)                    :: dt
-    real(double)                    :: T_ext
+    real(double), intent(in)        :: dt
+    real(double), intent(in)        :: T_ext
+    integer, intent(in)             :: tau_T
     logical, intent(in)             :: init_cell_cart
     character(40), intent(in)       :: vdistr
     character(40), intent(in)       :: thermo_type
+    integer, intent(in)             :: n_nhc
     logical, intent(in)             :: shift
     logical, intent(in)             :: remove_com_v
 
@@ -97,6 +101,8 @@ contains
     mdr%units = 'reduced-lj'
     mdr%V = mdr%p_t%volume()
     mdr%thermo_type = thermo_type
+    mdr%tau_T = tau_T
+    mdr%n_nhc = n_nhc
 
     select case (mdr%units)
     case ('reduced-lj')
@@ -493,24 +499,24 @@ contains
       call mdr%get_force_and_energy
       call mdr%vVerlet_v_half
 
-      ! Update arrays and thermodyanmics quantities
-      mdr%v_t = mdr%v_t_dt
-
-      call mdr%update_v(mdr%remove_com_v)
-
       ! Thermostat: velocity update
       if (mod(s,mdr%tau_T) == 0) then
         if (mdr%ensemble(3:3) == 't') then
           if (mdr%thermo_type == 'nhc') then
-            call mdr%th%propagate_nhc(mdr%dt, .true., mdr%mass, mdr%v_t)
+            call mdr%th%propagate_nhc(mdr%dt, .true., mdr%mass, mdr%v_t_dt)
             call mdr%th%get_nhc_energy(mdr%e_nhc)
           else
-            call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t)
+            call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t_dt)
           end if
         end if
       end if
 
+
+      ! Update arrays and thermodyanmics quantities
+      mdr%v_t = mdr%v_t_dt
+      call mdr%update_v(mdr%remove_com_v)
       call mdr%get_kinetic_energy
+
       write(*,'("  Total energy     = ",e16.8)') total_energy
       if (mdr%ensemble == 'nvt') then
         if (mdr%thermo_type == 'nhc') then
@@ -647,7 +653,7 @@ contains
                                   mdr%T_int, mdr%P_int
     case ('nvt')
       if (mdr%thermo_type == 'nhc') then
-        write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
+        write(iunit,'(i10,6e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
                                     mdr%pe+mdr%ke+mdr%e_nhc, mdr%T_int, mdr%P_int
       else
         write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &

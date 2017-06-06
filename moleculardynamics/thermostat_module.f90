@@ -53,8 +53,8 @@ contains
     th%iprint = iprint
     th%tau_T = tau_T
     th%k_B_md = one
-    th%n_nhc = 5
-    if (th_type == 'nhc') call th%init_nhc(n_nhc)
+    th%n_nhc = n_nhc
+    if (th_type == 'nhc') call th%init_nhc(th%n_nhc)
 
   end subroutine init_thermostat
 
@@ -139,7 +139,7 @@ contains
     integer                                   :: i
 
     if (th%iprint == 0) write(*,'(a)') "Thermostat: updating velocities"
-    v = v - th%p_xi(1)/th%Q(1)
+    v = v - half*dt*th%p_xi(1)/th%Q(1)
 
   end subroutine propagate_v
 

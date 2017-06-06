@@ -90,23 +90,35 @@ dt = float(mdin_params['dt'])
 step = []
 pe = []
 ke = []
+nhc = []
 E = []
 T = []
 P = []
 with open(opts.statfile, 'r') as statfile:
   statfile.readline()
   for line in statfile:
-    a, b, c, d, e, f = line.strip().split()
-    step.append(int(a))
-    pe.append(float(b))
-    ke.append(float(c))
-    E.append(float(d))
-    T.append(float(e))
-    P.append(float(f))
+    if mdin_params['ensemble'] == 'nve':
+      a, b, c, d, e, f = line.strip().split()
+      step.append(int(a))
+      pe.append(float(b))
+      ke.append(float(c))
+      E.append(float(d))
+      T.append(float(e))
+      P.append(float(f))
+    elif mdin_params['thermo_type'] == 'nhc':
+      a, b, c, d, e, f, g = line.strip().split()
+      step.append(int(a))
+      pe.append(float(b))
+      ke.append(float(c))
+      nhc.append(float(d))
+      E.append(float(e))
+      T.append(float(f))
+      P.append(float(g))
 
 step = sp.array(step)
 pe = sp.array(pe)
 ke = sp.array(ke)
+nhc = sp.array(nhc)
 E = sp.array(E)
 T = sp.array(T)
 P = sp.array(P)
@@ -120,6 +132,8 @@ fig1, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True)
 plt.xlim((opts.nskip,step[-1]))
 ax1.plot(step, pe, 'r-', label='Potential energy')
 ax1.plot(step, ke, 'b-', label='Kinetic energy')
+if mdin_params['thermo_type'] == 'nhc':
+  ax1.plot(step, nhc, 'b-', label='NHC energy')
 ax2.plot(step, E)
 ax2.plot((opts.nskip,step[-1]), (E_avg,E_avg), '-',
       label=r'$\langle E \rangle$ = {0:<12.4f}'.format(E_avg))
