@@ -141,12 +141,12 @@ contains
       write(*,'("Thermostat             ",a16)') mdr%thermo_type
       write(*,'("Thermostat period      ",i8)') mdr%tau_T
       if (mdr%thermo_type == 'nhc') then
-        write(*,'("NH chain length        ",a16)') mdr%n_nhc
+        write(*,'("NH chain length        ",i8)') mdr%n_nhc
         if (mdr%iprint == 0) then
         write(*,'(a)') "NHC heat bath parameters:"
-          write(*,'(3a12)') 'xi', 'p_xi', 'Q'
+          write(*,'(3a12)') 'eta', 'v_eta', 'Q'
           do i=1,mdr%n_nhc
-            write(*,'(3f12.4)') mdr%th%xi(i), mdr%th%p_xi(i), mdr%th%Q(i)
+            write(*,'(3f12.4)') mdr%th%eta(i), mdr%th%v_eta(i), mdr%th%Q(i)
           end do
         end if
       end if
@@ -428,7 +428,7 @@ contains
     ! local variables
     integer                         :: i
 
-    if (mdr%iprint == 0) write(*,'(a)') "Velocity Verlet velocity dt/2 update"
+    if (mdr%iprint == 0) write(*,'(4x,a)') "Velocity Verlet velocity dt/2 update"
     do i=1,mdr%nat
       mdr%v_t_dt(i,:) = mdr%v_t(i,:) + mdr%dt*half*mdr%f(i,:)/mdr%mass(i)
     end do
@@ -441,10 +441,10 @@ contains
     ! passed variables
     class(type_md), intent(inout)   :: mdr
 
-    if (mdr%iprint == 0) write(*,'(a)') "Velocity Verlet position dt update"
+    if (mdr%iprint == 0) write(*,'(4x,a)') "Velocity Verlet position dt update"
     mdr%p_t_dt%rcart = mdr%p_t%rcart + mdr%dt*mdr%v_t_dt
     ! wrap the updated positions back into the unit cell
-    if (mdr%iprint == 0) write(*,'(a)') "Wrapping positions into unit cell"
+    if (mdr%iprint == 0) write(*,'(4x,a)') "Wrapping positions into unit cell"
     call mdr%p_t_dt%wrap_positions_cart
 
   end subroutine vVerlet_r
@@ -484,11 +484,11 @@ contains
       if (mod(s,mdr%tau_T) == 0) then
         if (mdr%ensemble(3:3) == 't') then
           if (mdr%thermo_type == 'nhc') then
-            call mdr%th%propagate_nhc(mdr%dt, .false., mdr%mass, mdr%v_t)
+            call mdr%th%propagate_nhc(mdr%dt, mdr%ke, .false., mdr%v_t_dt)
           end if
         end if
       end if
-      call mdr%vVerlet_v_half
+      call mdr%vVerlet_v_half   ! v_t -> v_t_dt
       mdr%v_t = mdr%v_t_dt
 
       ! velocity Verlet algorithm
@@ -497,13 +497,13 @@ contains
         call mdr%p_t_dt%write_xsf(traj_unit, .true., s+1, s_end+1)
       end if
       call mdr%get_force_and_energy
-      call mdr%vVerlet_v_half
+      call mdr%vVerlet_v_half   ! v_t -> v_t_dt
 
       ! Thermostat: velocity update
       if (mod(s,mdr%tau_T) == 0) then
         if (mdr%ensemble(3:3) == 't') then
           if (mdr%thermo_type == 'nhc') then
-            call mdr%th%propagate_nhc(mdr%dt, .true., mdr%mass, mdr%v_t_dt)
+            call mdr%th%propagate_nhc(mdr%dt, mdr%ke, .true., mdr%v_t_dt)
             call mdr%th%get_nhc_energy(mdr%e_nhc)
           else
             call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t_dt)

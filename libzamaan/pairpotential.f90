@@ -181,8 +181,7 @@ contains
     end if
   end subroutine init_morse
 
-  ! Lennard-Jones energy
-  ! U = 4*epsil*((sigma/r)^12 - (sigma/r)^6)
+  ! Energy wrapper for arbitrary pair potential
   function pp_energy(pp, r_ij, s_i, s_j, shift) result(e)
 
     ! passed variables
@@ -203,8 +202,7 @@ contains
 
   end function pp_energy
 
-! Lennard-Jones force (derivative of energy)
-! U = 24*epsil/sigma*(2*(sigma/r)^13 - (sigma/r)^7)
+  ! Force wrapper for arbitrary pair potential
   function pp_force(pp, r_ij, s_i, s_j, shift) result(f)
 
     ! passed variables
@@ -225,7 +223,7 @@ contains
 
   end function pp_force
 
-  ! Compute force and energy in the same loop
+  ! Force and energy wrapper for arbitrary pair potential
   subroutine pp_force_and_energy(pp, r_ij, s_i, s_j, shift, f, e)
 
     ! passed variables

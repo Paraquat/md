@@ -128,6 +128,7 @@ subroutine read_input(inp, filename)
     end select
 
   end do
+  write(*,*)
 end subroutine read_input
 
 end module input_module
