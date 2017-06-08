@@ -80,8 +80,11 @@ opts = parser.parse_args()
 mdin_params = {}
 with open(opts.mdinfile, 'r') as infile:
   for line in infile:
-    param, value = line.split()
-    mdin_params[param] = value
+    try:
+      param, value = line.split()
+      mdin_params[param] = value
+    except ValueError:
+      continue
 
 natoms = int(mdin_params['natoms'])
 dt = float(mdin_params['dt'])

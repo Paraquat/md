@@ -1,0 +1,16 @@
+64 atom FCC crystalline single component Lennard-Jones. Sigma = 2.0 for a
+typical chemical bond-like characteristic length. Epsilon = 10.0 to prevent
+melting at T=0.1. Generates the NVT ensemble using a Nose-Hoover chain of length 5 (still not sure about the masses).
+
+Running md without any command line arguments will default to looking for the
+file 'md.in'.
+
+md > md.out
+
+Visualise xsf trajectory using (assuming vmd is in your $PATH):
+
+vmd -e view.vmd
+
+Analyse the trajectory, skipping the first 1000 steps with:
+
+md_analysis.py --skip 1000

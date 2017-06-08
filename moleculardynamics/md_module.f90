@@ -55,7 +55,7 @@ contains
   ! TODO: Altogether too many arguments here, fix this.
   subroutine init_md(mdr, init_cell, pp, init_cell_cart, ensemble, nstep, dt, &
                      T_ext, vdistr, shift, remove_com_v, thermo_type, tau_T, &
-                     n_nhc)
+                     n_nhc, nhc_mass)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -70,6 +70,7 @@ contains
     character(40), intent(in)       :: vdistr
     character(40), intent(in)       :: thermo_type
     integer, intent(in)             :: n_nhc
+    real(double), dimension(:), intent(in) :: nhc_mass
     logical, intent(in)             :: shift
     logical, intent(in)             :: remove_com_v
 
@@ -127,7 +128,8 @@ contains
       ! set ndof for extended lagrangian systems
       if (mdr%thermo_type == 'nhc') mdr%ndof = mdr%ndof + mdr%n_nhc
       call mdr%th%init_thermostat(thermo_type, mdr%nat, mdr%ndof, mdr%T_ext, &
-                                  mdr%tau_T, mdr%n_nhc, mdr%iprint)
+                                  mdr%tau_T, mdr%n_nhc, mdr%iprint, mdr%ke)
+      mdr%th%Q = nhc_mass
     end if
 
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
@@ -481,11 +483,9 @@ contains
       if (mod(s,mdr%dump_freq) == 0) d = .true.
       write(*,*)
       write(*,'("MD step ",i10," of ",i10)')  s, s_end
-      if (mod(s,mdr%tau_T) == 0) then
-        if (mdr%ensemble(3:3) == 't') then
-          if (mdr%thermo_type == 'nhc') then
-            call mdr%th%propagate_nhc(mdr%dt, mdr%ke, .false., mdr%v_t_dt)
-          end if
+      if (mdr%ensemble(3:3) == 't') then
+        if (mdr%thermo_type == 'nhc') then
+          call mdr%th%propagate_nhc(mdr%dt, mdr%v_t_dt)
         end if
       end if
       call mdr%vVerlet_v_half   ! v_t -> v_t_dt
@@ -500,26 +500,28 @@ contains
       call mdr%vVerlet_v_half   ! v_t -> v_t_dt
 
       ! Thermostat: velocity update
-      if (mod(s,mdr%tau_T) == 0) then
-        if (mdr%ensemble(3:3) == 't') then
-          if (mdr%thermo_type == 'nhc') then
-            call mdr%th%propagate_nhc(mdr%dt, mdr%ke, .true., mdr%v_t_dt)
-            call mdr%th%get_nhc_energy(mdr%e_nhc)
-          else
+      if (mdr%ensemble(3:3) == 't') then
+        if (mdr%thermo_type == 'nhc') then
+          call mdr%th%propagate_nhc(mdr%dt, mdr%v_t_dt)
+          call mdr%th%get_nhc_energy
+        else
+          if (mod(s,mdr%tau_T) == 0) then
             call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t_dt)
           end if
         end if
       end if
 
-
       ! Update arrays and thermodyanmics quantities
       mdr%v_t = mdr%v_t_dt
       call mdr%update_v(mdr%remove_com_v)
       call mdr%get_kinetic_energy
+      total_energy = mdr%ke + mdr%pe
+      if (mdr%ensemble(3:3) == 't') mdr%th%ke_system = mdr%ke
 
       write(*,'("  Total energy     = ",e16.8)') total_energy
       if (mdr%ensemble == 'nvt') then
         if (mdr%thermo_type == 'nhc') then
+          mdr%e_nhc = mdr%th%e_nhc
           write(*,'("  NHC energy       = ",e16.8)') mdr%e_nhc
           write(*,'("  NVT conserved E  = ",e16.8)') mdr%e_nhc + total_energy
         end if
@@ -527,7 +529,6 @@ contains
       call mdr%get_temperature
       call mdr%get_pressure
       call mdr%get_stress
-      total_energy = mdr%ke + mdr%pe
       mdr%p_t%rcart = mdr%p_t_dt%rcart
       if (mdr%ensemble(2:2) == 'p') then
         mdr%p_t%h = mdr%p_t_dt%h

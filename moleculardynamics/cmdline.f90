@@ -25,6 +25,7 @@ type type_cmdline
   logical             :: shift = .false.
   logical             :: comv = .false.
   logical             :: cart = .false.
+  real(double), dimension(:), allocatable :: nhc_mass
 
   contains
     procedure :: print_help
@@ -125,6 +126,8 @@ subroutine get_args(cmdl, args)
         call get_command_argument(i+1, arg)
         read(arg,*) cmdl%n_nhc
         i=i+2
+        allocate(cmdl%nhc_mass(cmdl%n_nhc))
+        cmdl%nhc_mass = one
       case ('-th', '--thermo')
         call get_command_argument(i+1, arg)
         read(arg,*) cmdl%ttype

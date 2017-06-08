@@ -9,7 +9,11 @@ module constants
   real(double), parameter     :: one = 1.0_double
   real(double), parameter     :: two = 2.0_double
   real(double), parameter     :: three = 3.0_double
-  real(double), parameter     :: half = 0.5_double
+  real(double), parameter     :: four = 4.0_double
+  real(double), parameter     :: eight = 8.0_double
+  real(double), parameter     :: half = one/two
+  real(double), parameter     :: quarter = one/four
+  real(double), parameter     :: eighth = one/eight
   real(double), parameter     :: pi = 3.14159265359_double
   real(double), parameter     :: twopi = two*pi
   real(double), parameter     :: rad2deg = 360.0_double/twopi

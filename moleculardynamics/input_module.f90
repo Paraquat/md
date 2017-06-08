@@ -31,6 +31,7 @@ module input_module
     real(double)    :: T_ext                ! external temperature
     integer         :: tau_T = 1            ! thermostat time period
     integer         :: n_nhc = 5            ! lenght of Nose-Hoover chain
+    real(double), dimension(:), allocatable :: nhc_mass
 
     ! Barostat paramters
     real(double)        :: P_ext
@@ -115,16 +116,21 @@ subroutine read_input(inp, filename)
       write(*,'("T_ext               ",l20)') inp%T_ext
     case ('tau_T')
       read(param,*) inp%tau_T
-      write(*,'("tau_T               ",l20)') inp%tau_T
+      write(*,'("tau_T               ",i20)') inp%tau_T
     case ('n_nhc')
       read(param,*) inp%n_nhc
       write(*,'("n_nhc               ",i20)') inp%n_nhc
+      allocate(inp%nhc_mass(inp%n_nhc))
+      inp%nhc_mass = one
     case ('P_ext')
       read(param,*) inp%P_ext
       write(*,'("P_ext               ",l20)') inp%P_ext
     case ('v_distr')
       read(param,*) inp%v_distr
       write(*,'("v_distr             ",a20)') inp%v_distr
+    case ('nhc_mass')
+      read(param,*) inp%nhc_mass
+      write(*,'("nhc_mass            ",f20.6)') inp%nhc_mass
     end select
 
   end do

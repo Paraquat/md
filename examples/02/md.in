@@ -1,0 +1,14 @@
+ensemble    nvt
+dt          0.001
+nsteps      10000
+natoms      64
+dump_freq   1
+comv        T
+cart        F
+shift       T
+v_distr     uniform
+thermo_type nhc
+T_ext       0.1
+tau_T       1
+n_nhc       3
+nhc_mass    1.0 1.0 1.0
