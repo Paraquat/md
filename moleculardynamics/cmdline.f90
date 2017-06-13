@@ -13,11 +13,13 @@ type type_cmdline
   character(40)       :: ppfile = 'pp.in'
   character(40)       :: sfile = 'cell.in'
   character(40)       :: outfile = 'md.out'
-  character(40)       :: ttype = 'velocity_rescale'
+  character(40)       :: ttype = 'nhc'
+  character(40)       :: btype = 'mttk'
   character(40)       :: init_distr = 'uniform'
   character(3)        :: ensemble = 'nve'
   real(double)        :: dt
   real(double)        :: T_ext
+  real(double)        :: P_ext
   integer             :: nsteps
   integer             :: dump_freq = 1
   integer             :: tau_T = 1
@@ -26,6 +28,7 @@ type type_cmdline
   logical             :: comv = .false.
   logical             :: cart = .false.
   real(double), dimension(:), allocatable :: nhc_mass
+  real(double)        :: boxm = one
 
   contains
     procedure :: print_help
@@ -56,8 +59,11 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-c,  --cart     [cart]      Input coordinates are Cartesian (default F)'
   write(*,'(a)') '-d,  --dumpfreq [freq]      Frequency of dump in time steps'
   write(*,'(a)') '-th, --thermo   [ttype]     Thermostat type'
-  write(*,'(a)') '-tT, --tau_T    [tau_T]     Frequency of thermostate propagation in time steps'
+  write(*,'(a)') '-tT, --tau_T    [tau_T]     Frequency of thermostat propagation in time steps'
   write(*,'(a)') '-nh, --n_nhc    [n_nhc]     Length of Nose-Hoover chain (default 5)'
+  write(*,'(a)') '-ba, --btype    [btype]     Barostat type'
+  write(*,'(a)') '-P,  --press    [P_ext]     External pressure'
+  write(*,'(a)') '-Wh, --box_mass [boxm]      External pressure'
 
 end subroutine print_help
 
@@ -98,6 +104,10 @@ subroutine get_args(cmdl, args)
         call get_command_argument(i+1, arg)
         read(arg,*) cmdl%T_ext
         i=i+2
+      case ('-P', '--press')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%P_ext
+        i=i+2
       case ('-pp', '--ppfile')
         call get_command_argument(i+1, arg)
         cmdl%ppfile=trim(arg)
@@ -128,9 +138,17 @@ subroutine get_args(cmdl, args)
         i=i+2
         allocate(cmdl%nhc_mass(cmdl%n_nhc))
         cmdl%nhc_mass = one
+      case ('-Wh', '--box_mass')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%boxm
+        i=i+2
       case ('-th', '--thermo')
         call get_command_argument(i+1, arg)
         read(arg,*) cmdl%ttype
+        i=i+2
+      case ('-ba', '--btype')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%btype
         i=i+2
       case ('-s', '--shift')
         cmdl%shift=.true.

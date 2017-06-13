@@ -30,7 +30,8 @@ if (args .eqv. .true.) then
 
   call mdr%init_md(init_cell, pp, opts%cart, opts%ensemble, pp%ns, opts%dt, &
                    opts%T_ext, opts%init_distr, opts%shift, opts%comv, &
-                   opts%ttype, opts%tau_T, opts%n_nhc, opts%nhc_mass)
+                   opts%ttype, opts%tau_T, opts%n_nhc, opts%nhc_mass, &
+                   opts%btype, opts%P_ext, opts%boxm)
   mdr%dump_freq = opts%dump_freq
   mdr%tau_T = opts%tau_T
 else
@@ -42,7 +43,8 @@ else
 
   call mdr%init_md(init_cell, pp, opts%cart, inp%ensemble, pp%ns, inp%dt, &
                    inp%T_ext, inp%v_distr, inp%shift, inp%comv, &
-                   inp%thermo_type, inp%tau_T, inp%n_nhc, inp%nhc_mass)
+                   inp%thermo_type, inp%tau_T, inp%n_nhc, inp%nhc_mass, &
+                   inp%baro_type, inp%P_ext, inp%box_mass)
   mdr%dump_freq = inp%dump_freq
   mdr%tau_T = inp%tau_T
 end if

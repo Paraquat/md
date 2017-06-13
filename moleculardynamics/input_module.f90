@@ -34,7 +34,9 @@ module input_module
     real(double), dimension(:), allocatable :: nhc_mass
 
     ! Barostat paramters
-    real(double)        :: P_ext
+    character(40)   :: baro_type
+    real(double)    :: P_ext
+    real(double)    :: box_mass = one
 
   contains
     procedure :: read_input
@@ -122,15 +124,21 @@ subroutine read_input(inp, filename)
       write(*,'("n_nhc               ",i20)') inp%n_nhc
       allocate(inp%nhc_mass(inp%n_nhc))
       inp%nhc_mass = one
-    case ('P_ext')
-      read(param,*) inp%P_ext
-      write(*,'("P_ext               ",l20)') inp%P_ext
     case ('v_distr')
       read(param,*) inp%v_distr
       write(*,'("v_distr             ",a20)') inp%v_distr
     case ('nhc_mass')
       read(param,*) inp%nhc_mass
       write(*,'("nhc_mass            ",f20.6)') inp%nhc_mass
+    case ('baro_type')
+      read(param,*) inp%baro_type
+      write(*,'("baro_type           ",a20)') inp%baro_type
+    case ('P_ext')
+      read(param,*) inp%P_ext
+      write(*,'("P_ext               ",f20.8)') inp%P_ext
+    case ('box_mass')
+      read(param,*) inp%box_mass
+      write(*,'("box_mass            "f20.8)') inp%box_mass
     end select
 
   end do

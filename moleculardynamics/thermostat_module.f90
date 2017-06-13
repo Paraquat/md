@@ -33,7 +33,7 @@ contains
   procedure :: propagate_v_eta_k_1
   procedure :: propagate_v_eta_k_2
   procedure :: propagate_nhc
-  procedure :: get_nhc_energy
+  procedure :: get_nhc_ke
 
 end type type_thermostat
 
@@ -133,7 +133,7 @@ contains
     th%Q = one
     th%v_eta = sqrt(two*th%T_ext/th%Q(1))
     th%G_nhc = zero
-    call th%get_nhc_energy
+    call th%get_nhc_ke
 
   end subroutine init_nhc
 
@@ -253,7 +253,7 @@ contains
   end subroutine propagate_nhc
 
   ! Compute the "NHC energy" for monitoring the conserved quantity (KE + PE + NHC energy)
-  subroutine get_nhc_energy(th)
+  subroutine get_nhc_ke(th)
 
     ! passed variables
     class(type_thermostat), intent(inout) :: th
@@ -261,6 +261,6 @@ contains
     th%e_nhc = half*sum(th%Q*th%v_eta**2)
     th%e_nhc = th%e_nhc + th%ndof*th%k_B_md*th%T_ext*th%eta(1)
     th%e_nhc = th%e_nhc + th%k_B_md*th%T_ext*sum(th%eta(2:))
-  end subroutine get_nhc_energy
+  end subroutine get_nhc_ke
 
 end module thermostat_module

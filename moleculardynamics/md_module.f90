@@ -7,6 +7,7 @@ use cell
 use pairpotential
 use rng
 use thermostat_module
+use barostat_module
 
 implicit none
 
@@ -14,17 +15,17 @@ type type_md
   type(type_cell)           :: p_t, p_t_dt
   type(type_pairpotential)  :: pp
   type(type_thermostat)     :: th
+  type(type_barostat)       :: baro
   character(3)    :: ensemble
   integer         :: nstep, nspec, nat, ndof, iprint, dump_freq, tau_T
   integer         :: n_nhc
   logical         :: shift, remove_com_v, dump
   character(40)   :: position_file, dump_file, stat_file, thermo_type, &
-                     init_distr, units
+                     baro_type, init_distr, units
   integer, allocatable, dimension(:)          :: species
   real(double), allocatable, dimension(:)     :: mass
   real(double), allocatable, dimension(:,:)   :: v_t, v_t_dt
   real(double), allocatable, dimension(:,:)   :: f
-  real(double), dimension(3,3)                :: p_g_t, p_g_t_dt
   real(double), dimension(3,3)                :: S_int, S_ext, &
                                                  virial_ke, virial_tensor
   real(double), dimension(3)                  :: sumv
@@ -55,7 +56,7 @@ contains
   ! TODO: Altogether too many arguments here, fix this.
   subroutine init_md(mdr, init_cell, pp, init_cell_cart, ensemble, nstep, dt, &
                      T_ext, vdistr, shift, remove_com_v, thermo_type, tau_T, &
-                     n_nhc, nhc_mass)
+                     n_nhc, nhc_mass, baro_type, P_ext, box_mass)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -73,6 +74,9 @@ contains
     real(double), dimension(:), intent(in) :: nhc_mass
     logical, intent(in)             :: shift
     logical, intent(in)             :: remove_com_v
+    character(40), intent(in)       :: baro_type
+    real(double), intent(in)        :: P_ext
+    real(double), intent(in)        :: box_mass
 
     ! local variables
     integer                         :: i, j
@@ -104,6 +108,8 @@ contains
     mdr%thermo_type = thermo_type
     mdr%tau_T = tau_T
     mdr%n_nhc = n_nhc
+    mdr%baro_type = baro_type
+    mdr%P_ext = P_ext
 
     select case (mdr%units)
     case ('reduced-lj')
@@ -131,6 +137,12 @@ contains
                                   mdr%tau_T, mdr%n_nhc, mdr%iprint, mdr%ke)
       mdr%th%Q = nhc_mass
     end if
+    ! constant pressure
+    if (mdr%ensemble(2:2) == 'p') then
+      ! set ndof for variable cell
+      call mdr%baro%init_barostat(mdr%baro_type, mdr%P_ext, mdr%nat, &
+                                  mdr%ndof, box_mass, mdr%iprint)
+    end if
 
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
 
@@ -139,7 +151,7 @@ contains
     write(*,'("Number of steps        ",i8)') mdr%nstep
     write(*,'("Time step              ",f8.4)') mdr%dt
     write(*,'("Remove COM velocity    ",l8)') mdr%remove_com_v
-    if (mdr%ensemble == 'nvt' .or. mdr%ensemble == 'npt') then
+    if (mdr%ensemble(3:3) == 't') then
       write(*,'("Thermostat             ",a16)') mdr%thermo_type
       write(*,'("Thermostat period      ",i8)') mdr%tau_T
       if (mdr%thermo_type == 'nhc') then
@@ -503,7 +515,7 @@ contains
       if (mdr%ensemble(3:3) == 't') then
         if (mdr%thermo_type == 'nhc') then
           call mdr%th%propagate_nhc(mdr%dt, mdr%v_t_dt)
-          call mdr%th%get_nhc_energy
+          call mdr%th%get_nhc_ke
         else
           if (mod(s,mdr%tau_T) == 0) then
             call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t_dt)
@@ -519,7 +531,7 @@ contains
       if (mdr%ensemble(3:3) == 't') mdr%th%ke_system = mdr%ke
 
       write(*,'("  Total energy     = ",e16.8)') total_energy
-      if (mdr%ensemble == 'nvt') then
+      if (mdr%ensemble(3:3) == 't') then
         if (mdr%thermo_type == 'nhc') then
           mdr%e_nhc = mdr%th%e_nhc
           write(*,'("  NHC energy       = ",e16.8)') mdr%e_nhc
