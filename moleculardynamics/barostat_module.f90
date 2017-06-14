@@ -36,7 +36,7 @@ contains
   procedure :: propagate_v_h_2
   procedure :: propagate_v_sys
   procedure :: propagate_r_sys
-  procedure :: propagate_box
+  procedure :: vVerlet_r_h_npt
 
 end type type_barostat
 
@@ -82,7 +82,7 @@ contains
 
   end subroutine init_xs
 
-  ! Get the eigenvalues/vectors of v_h(0) + Tr[v_h(0)]/N_f + v_eta(0)
+  ! Get the eigenvalues/vectors of v_h(0) + Tr[v_h(0)]/N_f + v_eta(1)
   subroutine get_lambda_cg(baro, v_eta)
 
     ! Passed variables
@@ -145,21 +145,26 @@ contains
     do i=1,3
       baro%ke_box = baro%ke_box + temp(i,i)
     end do
-    baro%ke_box = half*baro%W_h*baro%ke_box
+    baro%ke_box = baro%W_h*baro%ke_box
 
   end subroutine get_box_ke
 
   ! Update the box forces
-  subroutine update_G_h(baro, total_ke, virial_ke, volume)
+  subroutine update_G_h(baro, total_ke, virial_ke, volume, T_ext, Q_1, G_nhc_1)
 
     ! Passed variables
     class(type_barostat), intent(inout)       :: baro
     real(double), dimension(3,3), intent(in)  :: virial_ke
     real(double), intent(in)                  :: total_ke
     real(double), intent(in)                  :: volume
+    real(double), intent(in)                  :: T_ext
+    real(double), intent(in)                  :: Q_1 ! mass of NHC k=1
+    real(double), intent(out)                 :: G_nhc_1 ! force on NHC k=1
 
     baro%G_h = (baro%ident*total_ke/baro%ndof + virial_ke + &
                 volume*(baro%press - baro%ident*baro%P_ext))/baro%W_h
+    ! The force on the first NHC heat bath is required for thermostat coupling
+    G_nhc_1 = (total_ke + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
 
   end subroutine update_G_h
 
@@ -185,19 +190,8 @@ contains
 
   end subroutine propagate_h
 
-  ! exponential shift in box velocity from thermostat coupling
-  subroutine propagate_v_h_1(baro, dt, dtfac, v_eta)
-
-    ! Passed variables
-    class(type_barostat), intent(inout)      :: baro
-    real(double), intent(in)                  :: dt, dtfac, v_eta
-
-    baro%v_h = baro%v_h*exp(-dtfac*dt*v_eta)
-
-  end subroutine propagate_v_h_1
-
   ! linear shift in box velocity
-  subroutine propagate_v_h_2(baro, dt, dtfac)
+  subroutine propagate_v_h_1(baro, dt, dtfac)
 
     ! Passed variables
     class(type_barostat), intent(inout)      :: baro
@@ -205,19 +199,33 @@ contains
 
     baro%v_h = baro%v_h + dtfac*dt*baro%G_h
 
+  end subroutine propagate_v_h_1
+
+  ! exponential shift in box velocity from thermostat coupling
+  subroutine propagate_v_h_2(baro, dt, dtfac, v_eta)
+
+    ! Passed variables
+    class(type_barostat), intent(inout)      :: baro
+    real(double), intent(in)                  :: dt, dtfac, v_eta
+
+    baro%v_h = baro%v_h*exp(-dtfac*dt*v_eta)
+
   end subroutine propagate_v_h_2
 
   ! coupling box and particle velocities
-  subroutine propagate_v_sys(baro, dt, dtfac, v)
+  subroutine propagate_v_sys(baro, dt, dtfac, v_eta_1, v)
 
     ! Passed variables
     class(type_barostat), intent(inout)         :: baro
     real(double), intent(in)                    :: dt, dtfac
+    real(double), intent(in)                    :: v_eta_1
     real(double), dimension(:,:), intent(inout) :: v
 
     ! local variables
     real(double), dimension(3)                :: vscale, vtemp
     integer                                   :: i, j
+
+    call baro%get_lambda_cg(v_eta_1)
 
     do i=1,3
       vscale(i) = exp(-baro%lambda(i)*dt*dtfac)
@@ -265,8 +273,9 @@ contains
 
   end subroutine propagate_r_sys
 
-  ! Propagate the extended system. Temperature coupling determined by v_eta
-  subroutine propagate_box(baro, dt, h, v, r, v_eta)
+  ! Propagate the ionic positions and box of the extended system. Temperature
+  ! coupling determined by v_eta
+  subroutine vVerlet_r_h_npt(baro, dt, h, v, r, v_eta)
 
     ! Passed variables
     class(type_barostat), intent(inout)        :: baro
@@ -286,14 +295,6 @@ contains
     call baro%propagate_h(rscale, h)
     ! Proceded by velocity Verlet dt/2 step
 
-  end subroutine propagate_box
-
-  subroutine propagate_box_v(baro)
-
-    ! Passed variables
-    class(type_barostat), intent(inout)        :: baro
-
-
-  end subroutine propagate_box_v
+  end subroutine vVerlet_r_h_npt
 
 end module barostat_module

@@ -44,6 +44,7 @@ type type_md
     procedure :: vVerlet_v_half
     procedure :: vVerlet_r
     procedure :: md_run
+    procedure :: propagate_npt_mttk
     procedure :: fire
     procedure :: dump_atom_arr
     procedure :: md_dump
@@ -139,7 +140,8 @@ contains
     end if
     ! constant pressure
     if (mdr%ensemble(2:2) == 'p') then
-      ! set ndof for variable cell
+      ! set ndof for variable cell, assuming box is fully flexible
+      mdr%ndof = mdr%ndof + 9
       call mdr%baro%init_barostat(mdr%baro_type, mdr%P_ext, mdr%nat, &
                                   mdr%ndof, box_mass, mdr%iprint)
     end if
@@ -495,16 +497,25 @@ contains
       if (mod(s,mdr%dump_freq) == 0) d = .true.
       write(*,*)
       write(*,'("MD step ",i10," of ",i10)')  s, s_end
-      if (mdr%ensemble(3:3) == 't') then
+      if (mdr%ensemble == 'nvt') then
         if (mdr%thermo_type == 'nhc') then
-          call mdr%th%propagate_nhc(mdr%dt, mdr%v_t_dt)
+          call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t_dt)
+        end if
+      else if (mdr%ensemble == 'npt') then
+        if (mdr%thermo_type == 'nhc') then
+          call mdr%propagate_npt_mttk(mdr%dt)
         end if
       end if
       call mdr%vVerlet_v_half   ! v_t -> v_t_dt
       mdr%v_t = mdr%v_t_dt
 
-      ! velocity Verlet algorithm
-      call mdr%vVerlet_r
+      if (mdr%ensemble(2:2) == 'v') then ! constant volume
+        call mdr%vVerlet_r ! velocity Verlet r update
+      else if (mdr%ensemble(2:2) == 'p') then ! constant pressure
+        call mdr%baro%vVerlet_r_h_npt(mdr%dt, mdr%p_t_dt%h, mdr%v_t_dt, &
+                                      mdr%p_t_dt%r, mdr%th%v_eta(1))
+      end if
+      ! dump configuration to .xsf file
       if (d .eqv. .true.) then
         call mdr%p_t_dt%write_xsf(traj_unit, .true., s+1, s_end+1)
       end if
@@ -512,14 +523,18 @@ contains
       call mdr%vVerlet_v_half   ! v_t -> v_t_dt
 
       ! Thermostat: velocity update
-      if (mdr%ensemble(3:3) == 't') then
+      if (mdr%ensemble == 'nvt') then
         if (mdr%thermo_type == 'nhc') then
-          call mdr%th%propagate_nhc(mdr%dt, mdr%v_t_dt)
+          call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t_dt)
           call mdr%th%get_nhc_ke
         else
           if (mod(s,mdr%tau_T) == 0) then
             call mdr%th%propagate_vr_thermostat(mdr%T_int, mdr%v_t_dt)
           end if
+        end if
+      else if (mdr%ensemble == 'npt') then
+        if (mdr%thermo_type == 'nhc') then
+          call mdr%propagate_npt_mttk(mdr%dt)
         end if
       end if
 
@@ -562,6 +577,81 @@ contains
     close(stat_unit)
 
   end subroutine md_run
+
+  ! The velocity part of the update for the MTTK integrator. I'm putting this
+  ! here because it requires thermostat/barostat coupling
+  subroutine propagate_npt_mttk(mdr, dt)
+
+    ! passed variables
+    class(type_md), intent(inout)             :: mdr
+    real(double), intent(in)                  :: dt
+
+    ! local variables
+    integer         :: i,j, k
+    real(double)    :: dtys ! Yoshida-Suzuki time step
+    real(double)    :: v_sfac ! velocity scaling factor
+    real(double)    :: G_nhc_1 ! force on first NHC thermostat
+
+    v_sfac = one
+    ! Get the kinetic energy
+    ! Update forces on thermostat and barostat
+    call mdr%baro%update_G_h(mdr%ke, mdr%virial_ke, mdr%V, mdr%T_ext, &
+                             mdr%th%Q(1), G_nhc_1)
+    mdr%th%G_nhc(1) = G_nhc_1
+    do i=1,mdr%th%mts_nhc ! MTS loop
+      do j=1,mdr%th%n_ys ! Yoshida-Suzuki loop
+        ! Update thermostat velocities
+        do k=mdr%th%n_nhc,1,-1
+          if (mdr%th%n_nhc == 1) then
+            call mdr%th%update_G_k(k, mdr%baro%ke_box) ! should this be here?
+            call mdr%th%propagate_v_eta_k_1(k, dt, quarter)
+          else
+            call mdr%th%propagate_v_eta_k_2(k, dt, eighth)
+            call mdr%th%propagate_v_eta_k_1(k, dt, quarter)
+            call mdr%th%update_G_k(k, mdr%baro%ke_box) ! should this be here?
+            call mdr%th%propagate_v_eta_k_2(k, dt, eighth)
+          end if
+        end do
+        ! Update box velocities
+        call mdr%baro%propagate_v_h_2(dt, eighth, mdr%th%v_eta(1))
+        call mdr%baro%propagate_v_h_1(dt, quarter)
+        call mdr%baro%propagate_v_h_2(dt, eighth, mdr%th%v_eta(1))
+        ! Update thermostat positions
+        do k=1,mdr%th%n_nhc
+          call mdr%th%propagate_eta_k(k, dt, half)
+        end do
+        ! Update Particle velocities
+        call mdr%baro%propagate_v_sys(dt, half, mdr%th%v_eta(1), mdr%v_t_dt)
+        ! Get total ke
+        call mdr%get_kinetic_energy
+        ! Update the box forces
+        call mdr%baro%update_G_h(mdr%ke, mdr%virial_ke, mdr%V, mdr%T_ext, &
+                                 mdr%th%Q(1), G_nhc_1)
+        ! Update the box velocities
+        call mdr%baro%propagate_v_h_2(dt, eighth, mdr%th%v_eta(1))
+        call mdr%baro%propagate_v_h_1(dt, quarter)
+        call mdr%baro%propagate_v_h_2(dt, eighth, mdr%th%v_eta(1))
+        ! Update the box ke
+        call mdr%baro%get_box_ke
+        ! Update the thermostat forces
+        do k=1,mdr%th%n_nhc
+          call mdr%th%update_G_k(k, mdr%baro%ke_box)
+        end do
+        ! Update the thermostat velocities
+        do k=1,mdr%th%n_nhc
+          if (k<mdr%th%n_nhc) then
+            call mdr%th%propagate_v_eta_k_2(k, dt, eighth)
+            call mdr%th%update_G_k(k, mdr%baro%ke_box)
+            call mdr%th%propagate_v_eta_k_1(k, dt, quarter)
+            call mdr%th%propagate_v_eta_k_2(k, dt, eighth)
+          else
+            call mdr%th%update_G_k(k, mdr%baro%ke_box)
+            call mdr%th%propagate_v_eta_k_1(k, dt, quarter)
+          end if
+        end do
+      end do ! MTS loop
+    end do ! Yoshida-Suzuki loop
+  end subroutine propagate_npt_mttk
 
   ! Perform geometry optimisation using FIRE
   subroutine fire(mdr, alpha)

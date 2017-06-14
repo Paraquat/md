@@ -17,7 +17,7 @@ type type_thermostat
   real(double)        :: e_nhc   ! NHC contribution to the conserved term
   character(40)       :: th_type
   real(double), dimension(:), allocatable   :: eta   ! thermostat k position
-  real(double), dimension(:), allocatable   :: v_eta ! thermostat k momentum
+  real(double), dimension(:), allocatable   :: v_eta ! thermostat k velocity
   real(double), dimension(:), allocatable   :: G_nhc ! force on thermostat k
   real(double), dimension(:), allocatable   :: Q     ! thermostat k mass
 
@@ -32,7 +32,7 @@ contains
   procedure :: propagate_eta_k
   procedure :: propagate_v_eta_k_1
   procedure :: propagate_v_eta_k_2
-  procedure :: propagate_nhc
+  procedure :: propagate_nvt_nhc
   procedure :: get_nhc_ke
 
 end type type_thermostat
@@ -138,14 +138,15 @@ contains
   end subroutine init_nhc
 
   ! get the force on thermostat k
-  subroutine update_G_k(th, k)
+  subroutine update_G_k(th, k, box_ke)
 
     ! passed variables
     class(type_thermostat), intent(inout)   :: th
     integer, intent(in)                     :: k
+    real(double), intent(in)                :: box_ke ! for P-T coupling
 
     if (k == 1) then
-      th%G_nhc(k) = 2*th%ke_system - th%ndof*th%k_B_md*th%T_ext
+      th%G_nhc(k) = 2*th%ke_system - th%ndof*th%k_B_md*th%T_ext + box_ke
     else
       th%G_nhc(k) = (th%Q(k-1)*th%v_eta(k-1)**2 - th%k_B_md*th%T_ext)
     end if
@@ -195,7 +196,7 @@ contains
   end subroutine propagate_v_eta_k_2
 
   ! Propagate the NHC
-  subroutine propagate_nhc(th, dt, v)
+  subroutine propagate_nvt_nhc(th, dt, v)
 
     ! passed variables
     class(type_thermostat), intent(inout)       :: th
@@ -216,13 +217,13 @@ contains
         ! Reverse part of expansion: update forces and thermostat velocities
         do k=th%n_nhc,1,-1
           if (k==th%n_nhc) then
-            call th%update_G_k(k)
+            call th%update_G_k(k, zero)
             call th%propagate_v_eta_k_1(k, dt, quarter)
           else
             ! Trotter expansion to avoid sinh singularity (see MTTK paper)
             call th%propagate_v_eta_k_2(k, dt, eighth)
             call th%propagate_v_eta_k_1(k, dt, quarter)
-            call th%update_G_k(k)
+            call th%update_G_k(k, zero)
             call th%propagate_v_eta_k_2(k, dt, eighth)
           end if
         end do
@@ -237,11 +238,11 @@ contains
           if (k<th%n_nhc) then
             ! Trotter expansion to avoid sinh singularity (see MTTK paper)
             call th%propagate_v_eta_k_2(k, dt, eighth)
-            call th%update_G_k(k)
+            call th%update_G_k(k, zero)
             call th%propagate_v_eta_k_1(k, dt, quarter)
             call th%propagate_v_eta_k_2(k, dt, eighth)
           else
-            call th%update_G_k(k)
+            call th%update_G_k(k, zero)
             call th%propagate_v_eta_k_1(k, dt, quarter)
           end if
         end do
@@ -250,7 +251,7 @@ contains
 
     v = v_sfac*v
 
-  end subroutine propagate_nhc
+  end subroutine propagate_nvt_nhc
 
   ! Compute the "NHC energy" for monitoring the conserved quantity (KE + PE + NHC energy)
   subroutine get_nhc_ke(th)
