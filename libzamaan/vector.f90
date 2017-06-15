@@ -25,13 +25,26 @@ module vector
   end function norm
 
   ! Cross product
-  subroutine cross_product(u, v, cross)
+  function cross_product(u, v) result(cross)
     real(double), dimension(3)  :: u, v, cross
 
     cross(1) = u(2)*v(3) - u(3)*v(2)
     cross(2) = u(3)*v(1) - u(1)*v(3)
     cross(3) = u(1)*v(2) - u(2)*v(1)
-  end subroutine cross_product
+  end function cross_product
+
+  ! tensor product
+  function tensor_product(u, v) result(m)
+    real(double), dimension(3)    :: u, v
+    real(double), dimension(3,3)  :: m
+    integer                       :: i, j
+
+    do i=1,3
+      do j=1,3
+        m(i,j) = u(i)*v(j)
+      end do
+    end do
+  end function tensor_product
 
   ! angle between vectors u and v in degrees
   subroutine vangle(u, v, thetad)

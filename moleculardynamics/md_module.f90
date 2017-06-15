@@ -331,7 +331,7 @@ contains
 
     ! local variables
     integer                         :: iat, jat, s_i, s_j, mu, nu
-    real(double), dimension(3)      :: r_ij_cart
+    real(double), dimension(3)      :: r_ij_cart, f_ij
     real(double)                    :: mod_r_ij, mod_f, pe
 
     mdr%pe = zero
@@ -339,36 +339,28 @@ contains
     mdr%fdotr = zero
     mdr%virial_tensor = zero
 
-    ! TODO: This loop is doing twice as many calculations as it needs to.
     do iat=1,mdr%nat
-      do jat=1,mdr%nat
-        if (iat == jat) cycle
+      do jat=iat+1,mdr%nat
         s_i = mdr%species(iat)
         s_j = mdr%species(jat)
         r_ij_cart = mdr%p_t_dt%mic(mdr%p_t_dt%rcart(iat,:), &
                                    mdr%p_t_dt%rcart(jat,:))
         mod_r_ij = modulus(r_ij_cart)
         if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
-          r_ij_cart = norm(r_ij_cart)
           call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
                                           mod_f, pe)
-          mdr%f(iat,:) = mdr%f(iat,:) + mod_f*r_ij_cart
+          f_ij = mod_f*norm(r_ij_cart)
+          mdr%f(iat,:) = mdr%f(iat,:) + f_ij
+          mdr%f(jat,:) = mdr%f(jat,:) - f_ij
           mdr%pe = mdr%pe + pe
-        end if
-        ! compute virial
-        if (jat < iat) then
-          ! mdr%fdotr = mdr%fdotr + sum(mdr%f(iat,:)*r_ij_cart)
-          mdr%fdotr = mdr%fdotr + dot_product(mdr%f(iat,:), r_ij_cart)
-          do mu=1,3
-            do nu=1,3
-              mdr%virial_tensor(mu,nu) = mdr%virial_tensor(mu,nu) + &
-                                         mdr%f(iat,mu)*r_ij_cart(nu)
-            end do
-          end do
+          ! compute virial
+          mdr%fdotr = mdr%fdotr + dot_product(f_ij, r_ij_cart)
+          mdr%virial_tensor = mdr%virial_tensor + &
+                              tensor_product(f_ij, r_ij_cart)
         end if
       end do
     end do
-    mdr%pe = mdr%pe*half
+    ! mdr%pe = mdr%pe*half
     write(*,'("  Potential energy = ",e16.8)') mdr%pe
   end subroutine get_force_and_energy
 
@@ -385,12 +377,8 @@ contains
     mdr%virial_ke = zero
     do i=1,mdr%nat
       mdr%ke = mdr%ke + mdr%mass(i)*sum(mdr%v_t(i,:)**2)
-      do mu=1,3
-        do nu=1,3
-          mdr%virial_ke(mu,nu) = mdr%virial_ke(mu,nu) + &
-                                 mdr%mass(i)*mdr%v_t(i,mu)*mdr%v_t(i,nu)
-        end do
-      end do
+      mdr%virial_ke = mdr%virial_ke + &
+                      mdr%mass(i)*tensor_product(mdr%v_t(i,:), mdr%v_t(i,:))
     end do
     mdr%ke = mdr%ke/two
     write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke
@@ -442,7 +430,7 @@ contains
     ! local variables
     integer                         :: i
 
-    mdr%S_int = (one/mdr%V)*(-mdr%virial_ke + half*mdr%virial_tensor)
+    mdr%S_int = (one/mdr%V)*(-mdr%virial_ke + mdr%virial_tensor)
     if (mdr%iprint == 0) then
       write(*,*)
       write(*,'(4x,a36,4x,a36)') "Virial KE", "Virial r.F"

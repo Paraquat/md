@@ -185,7 +185,7 @@ function volume(p) result(vol)
   real(double), dimension(3)        :: cp
   real(double)                      :: vol
 
-  call cross_product(p%h(2,:), p%h(3,:), cp)
+  cp = cross_product(p%h(2,:), p%h(3,:))
   vol = dot_product(p%h(1,:), cp)
 end function volume
 
