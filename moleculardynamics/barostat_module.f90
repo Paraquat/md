@@ -94,6 +94,7 @@ contains
     real(double)                              :: tr_vh
     integer                                   :: i, lwork, info
 
+    if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: Computing eigenvalues of v_h"
     lwork = 27
     allocate(work(lwork))
 
@@ -161,6 +162,7 @@ contains
     real(double), intent(in)                  :: Q_1 ! mass of NHC k=1
     real(double), intent(out)                 :: G_nhc_1 ! force on NHC k=1
 
+    if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: updating box force G_h"
     baro%G_h = (baro%ident*total_ke/baro%ndof + virial_ke + &
                 volume*(baro%press - baro%ident*baro%P_ext))/baro%W_h
     ! The force on the first NHC heat bath is required for thermostat coupling
@@ -180,6 +182,7 @@ contains
     integer                                   :: i, j
     real(double), dimension(3,3)              :: htemp
 
+    if (baro%iprint == 0) write(*,'(4x,a)') "MTTK: propagating h"
     htemp = matmul(transpose(baro%c_g), h)
     do i=1,3
       do j=1,3
@@ -197,6 +200,7 @@ contains
     class(type_barostat), intent(inout)      :: baro
     real(double), intent(in)                  :: dt, dtfac
 
+    if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: propagating v_h linear shift"
     baro%v_h = baro%v_h + dtfac*dt*baro%G_h
 
   end subroutine propagate_v_h_1
@@ -208,6 +212,7 @@ contains
     class(type_barostat), intent(inout)      :: baro
     real(double), intent(in)                  :: dt, dtfac, v_eta
 
+    if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: propagating v_h exp factor"
     baro%v_h = baro%v_h*exp(-dtfac*dt*v_eta)
 
   end subroutine propagate_v_h_2
@@ -225,6 +230,7 @@ contains
     real(double), dimension(3)                :: vscale, vtemp
     integer                                   :: i, j
 
+    if (baro%iprint == 0) write(*,'(4x,a)') "MTTK: propagating particle velocities"
     call baro%get_lambda_cg(v_eta_1)
 
     do i=1,3
@@ -260,6 +266,7 @@ contains
     real(double), dimension(3)                  :: u, uv
     real(double)                                :: exp_eig, sinhx_x
 
+    if (baro%iprint == 0) write(*,'(4x,a)') "MTTK: propagating particle positions"
     do i=1,baro%nat
       do j=1,3
         u(j) = dot_product(r(i,:), baro%c_g(:,j))

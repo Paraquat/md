@@ -2,7 +2,7 @@ include Makefile.inc
 
 .DEFAULT_GOAL = libzamaan.a
 
-LDFLAGS = $(LPATH) $(IPATH) -lfftw3 -llapack -lblas
+LDFLAGS = $(LPATH) $(IPATH) -llapack -lblas
 FCFLAGS = -fbackslash # gfortran ONLY!
 SRCS = datatypes.f90 constants.f90 maths.f90 rng.f90 vector.f90 progress.f90 grft.f90 data.f90 cell.f90 pairdist.f90 pairpotential.f90
 OBJS = datatypes.o constants.o rng.o maths.o vector.o progress.o grft.o data.o cell.o pairdist.o pairpotential.o

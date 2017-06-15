@@ -3,7 +3,7 @@ include Makefile.inc
 PROG = md
 
 #FCFLAGS = -fbackslash
-LDFLAGS = $(LPATH) $(IPATH) -lzamaan  -lfftw3 -llapack -lblas
+LDFLAGS = $(LPATH) $(IPATH) -lzamaan -llapack -lblas
 SRCS = input_module.f90 thermostat_module.f90 barostat_module.f90 md_module.f90 cmdline.f90 main.f90
 OBJS = input_module.o thermostat_module.o barostat_module.o md_module.o cmdline.o main.o
 DEBUG = -O0 -g -fbounds-check

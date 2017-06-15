@@ -30,7 +30,7 @@ type type_md
                                                  virial_ke, virial_tensor
   real(double), dimension(3)                  :: sumv
   real(double)   :: pe, ke, T_int, T_ext, dt, sumv2, k_B_md, fdotr, P_int, &
-                    P_ext, V, e_nhc
+                    P_ext, V, e_nhc, ke_box, pv, e_npt, e_nvt, e_nve
 
   contains
     procedure :: init_md
@@ -38,6 +38,7 @@ type type_md
     procedure :: update_v
     procedure :: get_force_and_energy
     procedure :: get_kinetic_energy
+    procedure :: get_pv
     procedure :: get_temperature
     procedure :: get_pressure
     procedure :: get_stress
@@ -322,7 +323,7 @@ contains
     end do
   end subroutine update_v
 
-  ! Compute the potential energy and force on each atom
+  ! Compute the potential energy and force on each atom, update the virial
   subroutine get_force_and_energy(mdr)
 
     ! passed variables
@@ -338,6 +339,7 @@ contains
     mdr%fdotr = zero
     mdr%virial_tensor = zero
 
+    ! TODO: This loop is doing twice as many calculations as it needs to.
     do iat=1,mdr%nat
       do jat=1,mdr%nat
         if (iat == jat) cycle
@@ -355,7 +357,8 @@ contains
         end if
         ! compute virial
         if (jat < iat) then
-          mdr%fdotr = mdr%fdotr + sum(mdr%f(iat,:)*r_ij_cart)
+          ! mdr%fdotr = mdr%fdotr + sum(mdr%f(iat,:)*r_ij_cart)
+          mdr%fdotr = mdr%fdotr + dot_product(mdr%f(iat,:), r_ij_cart)
           do mu=1,3
             do nu=1,3
               mdr%virial_tensor(mu,nu) = mdr%virial_tensor(mu,nu) + &
@@ -394,6 +397,17 @@ contains
 
   end subroutine get_kinetic_energy
 
+  ! Compute the pV term for the enthalpy
+  subroutine get_pv(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    mdr%V = mdr%p_t%volume()
+    mdr%pv = mdr%v*mdr%P_ext ! Should use the target pressure according to MTTK
+
+  end subroutine get_pv
+
   ! Compute the temperature
   subroutine get_temperature(mdr)
 
@@ -428,7 +442,17 @@ contains
     ! local variables
     integer                         :: i
 
-    mdr%S_int = (one/mdr%V)*(mdr%virial_ke + mdr%virial_tensor)
+    mdr%S_int = (one/mdr%V)*(-mdr%virial_ke + half*mdr%virial_tensor)
+    if (mdr%iprint == 0) then
+      write(*,*)
+      write(*,'(4x,a36,4x,a36)') "Virial KE", "Virial r.F"
+      do i=1,3
+        write(*,'(4x,3f12.4,4x,3f12.4)') mdr%virial_ke(i,:), &
+                                         mdr%virial_tensor(i,:)
+      end do
+      write(*,*)
+    end if
+
     write(*,'(2x,a)') "Stress tensor:"
     do i=1,3
       write(*,'(4x,3f16.8)') mdr%S_int(i,:)
@@ -474,7 +498,6 @@ contains
 
     ! local variables
     integer       :: s, traj_unit, dump_unit, stat_unit
-    real(double)  :: total_energy
     logical       :: d
 
     traj_unit = 101
@@ -542,15 +565,27 @@ contains
       mdr%v_t = mdr%v_t_dt
       call mdr%update_v(mdr%remove_com_v)
       call mdr%get_kinetic_energy
-      total_energy = mdr%ke + mdr%pe
+      mdr%e_nve = mdr%ke + mdr%pe
       if (mdr%ensemble(3:3) == 't') mdr%th%ke_system = mdr%ke
 
-      write(*,'("  Total energy     = ",e16.8)') total_energy
-      if (mdr%ensemble(3:3) == 't') then
+      write(*,'("  Total energy     = ",e16.8)') mdr%e_nve
+      if (mdr%ensemble == 'nvt') then
         if (mdr%thermo_type == 'nhc') then
           mdr%e_nhc = mdr%th%e_nhc
+          mdr%e_nvt = mdr%e_nve + mdr%e_nhc
           write(*,'("  NHC energy       = ",e16.8)') mdr%e_nhc
-          write(*,'("  NVT conserved E  = ",e16.8)') mdr%e_nhc + total_energy
+          write(*,'("  NVT conserved E  = ",e16.8)') mdr%e_nvt
+        end if
+      end if
+      if (mdr%ensemble == 'npt') then
+        if (mdr%baro_type == 'mttk') then
+          mdr%ke_box = mdr%baro%ke_box
+          call mdr%get_pv
+          mdr%e_npt = mdr%e_nve + mdr%e_nhc + mdr%pv + mdr%ke_box 
+          write(*,'("  NHC energy       = ",e16.8)') mdr%e_nhc
+          write(*,'("  Box energy       = ",e16.8)') mdr%ke_box
+          write(*,'("  PV               = ",e16.8)') mdr%pv
+          write(*,'("  NPT conserved E  = ",e16.8)') mdr%e_npt
         end if
       end if
       call mdr%get_temperature
@@ -602,7 +637,7 @@ contains
       do j=1,mdr%th%n_ys ! Yoshida-Suzuki loop
         ! Update thermostat velocities
         do k=mdr%th%n_nhc,1,-1
-          if (mdr%th%n_nhc == 1) then
+          if (k==mdr%th%n_nhc) then
             call mdr%th%update_G_k(k, mdr%baro%ke_box) ! should this be here?
             call mdr%th%propagate_v_eta_k_1(k, dt, quarter)
           else
@@ -748,18 +783,28 @@ contains
         else
           write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
         end if
+      case ('npt')
+        if (mdr%thermo_type == 'nhc') then
+          write(iunit,'(a10,8a16)') "step", "pe", "ke", "nhc", "box", "pV", "total", "T", "P"
+        end if
       end select
     end if
     select case (mdr%ensemble)
     case ('nve')
-      write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &
+      write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%e_nve, &
                                   mdr%T_int, mdr%P_int
     case ('nvt')
       if (mdr%thermo_type == 'nhc') then
         write(iunit,'(i10,6e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
-                                    mdr%pe+mdr%ke+mdr%e_nhc, mdr%T_int, mdr%P_int
+                                    mdr%e_nvt, mdr%T_int, mdr%P_int
       else
         write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &
+                                    mdr%T_int, mdr%P_int
+      end if
+    case ('npt')
+      if (mdr%thermo_type == 'nhc') then
+        write(iunit,'(i10,8e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
+                                    mdr%e_nvt, mdr%ke_box, mdr%pv, &
                                     mdr%T_int, mdr%P_int
       end if
     end select
