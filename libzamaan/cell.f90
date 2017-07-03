@@ -12,7 +12,7 @@ public :: type_cell
 type type_cell
   integer         :: nat
   integer         :: nspec
-
+  real(double)    :: V
   real(double), allocatable, dimension(:,:) :: r, rcart, dt
   character(2), allocatable, dimension(:)   :: spec, species
   integer, allocatable, dimension(:)        :: spec_count, spec_int
@@ -500,6 +500,7 @@ subroutine read_cell(p, infilename)
   call p%cell_frac2cart
   call p%count_species
   call p%int_label_species
+  p%V = p%volume()
   allocate(p%mass(p%nspec))
   rewind(unit=101)
 

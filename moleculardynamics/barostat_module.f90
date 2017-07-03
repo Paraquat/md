@@ -11,10 +11,10 @@ type type_barostat
   character(40)                 :: baro_type
   real(double)                  :: P_ext  ! applied pressure
   real(double)                  :: W_h    ! box mass
+  real(double), dimension(3,3)  :: h      ! box matrix
   real(double), dimension(3,3)  :: v_h    ! box velocity
   real(double), dimension(3,3)  :: stress ! stress tensor
-  real(double), dimension(3,3)  :: ke_stress ! ke contribution to stress tensor
-  real(double), dimension(3,3)  :: press  ! full pressure tensor including ke
+  real(double), dimension(3,3)  :: virial_ke ! ke contribution to stress tensor
   real(double), dimension(3,3)  :: G_h    ! box force
   real(double), dimension(3,3)  :: ident  ! 3x3 identity matrix
   real(double), dimension(3,3)  :: c_g    ! eigenvectors 
@@ -37,6 +37,7 @@ contains
   procedure :: propagate_v_sys
   procedure :: propagate_r_sys
   procedure :: vVerlet_r_h_npt
+  procedure :: dump_baro_state
 
 end type type_barostat
 
@@ -151,11 +152,13 @@ contains
   end subroutine get_box_ke
 
   ! Update the box forces
-  subroutine update_G_h(baro, total_ke, virial_ke, volume, T_ext, Q_1, G_nhc_1)
+  subroutine update_G_h(baro, total_ke, virial_ke, stress, volume, &
+                        T_ext, Q_1, G_nhc_1)
 
     ! Passed variables
     class(type_barostat), intent(inout)       :: baro
     real(double), dimension(3,3), intent(in)  :: virial_ke
+    real(double), dimension(3,3), intent(in)  :: stress
     real(double), intent(in)                  :: total_ke
     real(double), intent(in)                  :: volume
     real(double), intent(in)                  :: T_ext
@@ -163,8 +166,10 @@ contains
     real(double), intent(out)                 :: G_nhc_1 ! force on NHC k=1
 
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: updating box force G_h"
+    baro%stress = stress
+    baro%virial_ke = virial_ke
     baro%G_h = (baro%ident*total_ke/baro%ndof + virial_ke + &
-                volume*(baro%press - baro%ident*baro%P_ext))/baro%W_h
+                volume*(stress - baro%ident*baro%P_ext))/baro%W_h
     ! The force on the first NHC heat bath is required for thermostat coupling
     G_nhc_1 = (total_ke + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
 
@@ -190,6 +195,7 @@ contains
       end do 
     end do
     h = matmul(baro%c_g, htemp)
+    baro%h = h
 
   end subroutine propagate_h
 
@@ -303,5 +309,38 @@ contains
     ! Proceded by velocity Verlet dt/2 step
 
   end subroutine vVerlet_r_h_npt
+
+  ! Debugging routine: dump the state of the barostat
+  subroutine dump_baro_state(baro, step, funit)
+
+    ! Passed variables
+    class(type_barostat), intent(inout)        :: baro
+    integer, intent(in)                        :: step, funit
+
+    ! local variables
+    integer                                    :: i
+
+    write(funit,'("step   ",i12)') step
+    write(funit,'("box ke ",f12.4)') baro%ke_box
+    write(funit,'(8x,a)') "Lattice vectors"
+    do i=1,3
+      write(funit,'(4x,3f12.4)') baro%h(i,:)
+    end do
+    write(funit,'(8x,a,29x,a)') "Virial KE", "Stress"
+    do i=1,3
+      write(funit,'(4x,3f12.4,4x,3f12.4)') baro%virial_ke(i,:), &
+                                           baro%stress(i,:)
+    end do
+    write(funit,'(8x,a,12x,a)') 'lambda', 'c_g'
+    do i=1,3
+      write(funit,'(4x,f12.4,6x,3f12.4)') baro%lambda(i), baro%c_g(i,:)
+    end do
+    write(funit,'(8x,a)') "G_h"
+    do i=1,3
+      write(funit,'(4x,3f12.4)') baro%G_h(i,:)
+    end do
+    write(funit,*)
+
+  end subroutine dump_baro_state
 
 end module barostat_module
