@@ -11,9 +11,11 @@ type type_iso_barostat
   character(40)                 :: baro_type
   real(double), dimension(3,3)  :: h      ! current cell
   real(double), dimension(3,3)  :: h_0    ! reference cell
+  real(double), dimension(3,3)  :: stress
   real(double)                  :: V      ! box volume
   real(double)                  :: V_ref  ! reference box volume
   real(double)                  :: eps    ! third*log(V/V_ref)
+  real(double)                  :: eps_ref ! reference cell epsilon
   real(double)                  :: P_int  ! internal pressure excluding kinetic
   real(double)                  :: P_ext  ! applied pressure
   real(double)                  :: W_eps  ! box mass
@@ -59,22 +61,23 @@ contains
     integer       :: i
     real(double)  :: W_eps
 
+    baro%iprint = iprint
     baro%baro_type = baro_type
+    baro%ndof = ndof
+    baro%odnf = one + three/baro%ndof
+    baro%W_eps = box_mass
     baro%h_0 = h_ref
     baro%h = h_ref
 
-    baro%V = volume
+    ! initialise epsilon
     baro%V_ref = volume
-    baro%nat = nat
-    baro%ndof = ndof
-    baro%odnf = (one + three/baro%ndof)
-    baro%eps = zero
-    baro%iprint = iprint
+    baro%V = baro%V_ref
+    baro%eps_ref = third*log(baro%V/baro%V_ref)
+    baro%eps = baro%eps_ref
 
     baro%v_eps = zero
     baro%k_B_md = one
 
-    baro%W_eps = box_mass
     baro%ke_box = zero
 
   end subroutine init_barostat_iso
@@ -102,13 +105,18 @@ contains
     real(double), intent(in)                  :: Q_1 ! mass of NHC k=1
     real(double), intent(out)                 :: G_nhc_1 ! force on NHC k=1
 
+    ! local variables
+    real(double)                              :: akin
+
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: updating box force G_eps"
+    akin = ke*two
     baro%P_int = P_int
-    baro%G_eps = (baro%odnf*ke + three*(P_int - &
+    baro%G_eps = (baro%odnf*akin + three*(P_int - &
                   baro%P_ext)*volume)/baro%W_eps
     ! The force on the first NHC heat bath is required for thermostat coupling
-    G_nhc_1 = (ke + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
+    G_nhc_1 = (akin + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
     baro%G_nhc_1 = G_nhc_1
+    write(14,*) baro%P_int, baro%odnf*akin, baro%G_eps
 
   end subroutine update_G_eps
 
@@ -156,7 +164,9 @@ contains
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)   :: baro
-    real(double), intent(in)                  :: dt, dtfac, v_eta
+    real(double), intent(in)                  :: dt, dtfac
+    real(double), intent(in)                  :: v_eta ! velocity of
+                                                       ! thermostat 1
 
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: propagating v_eps exp factor"
     baro%v_eps = baro%v_eps*exp(-dtfac*dt*v_eta)
@@ -203,14 +213,10 @@ contains
 
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: propagating particle positions"
     exp_v_eps = exp(dt*dtfac*baro%v_eps)
-    sinhx_x = exp_sinhx_x((dtfac*dt*baro%v_eps)**2)
+    sinhx_x = exp_sinhx_x(dtfac*dt*baro%v_eps)
     rscale = exp_v_eps**2
     vscale = exp_v_eps*sinhx_x*dt
-    do i=1,baro%nat
-      do j=1,3
-        rout(i,j) = rin(i,j)*rscale + v(i,j)*vscale
-      end do 
-    end do
+    rout = rin*rscale + v*vscale
 
   end subroutine propagate_r_sys
 
@@ -250,6 +256,10 @@ contains
     write(funit,'(8x,a)') "Lattice vectors"
     do i=1,3
       write(funit,'(4x,3f12.4)') baro%h(i,:)
+    end do
+    write(funit,'(8x,a)') "Stress tensor"
+    do i=1,3
+      write(funit,'(4x,3f12.4)') baro%stress(i,:)
     end do
     write(funit,'("eps:   ",e16.4)') baro%eps
     write(funit,'("v_eps: ",e16.4)') baro%v_eps

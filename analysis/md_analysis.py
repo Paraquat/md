@@ -99,6 +99,7 @@ pv = []
 E = []
 T = []
 P = []
+V = []
 with open(opts.statfile, 'r') as statfile:
   statfile.readline()
   for line in statfile:
@@ -121,7 +122,7 @@ with open(opts.statfile, 'r') as statfile:
         T.append(float(f))
         P.append(float(g))
     elif mdin_params['ensemble'] == 'npt':
-      a, b, c, d, e, f, g, h, i = line.strip().split()
+      a, b, c, d, e, f, g, h, i, j = line.strip().split()
       step.append(int(a))
       pe.append(float(b))
       ke.append(float(c))
@@ -131,6 +132,7 @@ with open(opts.statfile, 'r') as statfile:
       E.append(float(g))
       T.append(float(h))
       P.append(float(i))
+      V.append(float(j))
 
 step = sp.array(step)
 pe = sp.array(pe)
@@ -141,9 +143,11 @@ pv = sp.array(pv)
 E = sp.array(E)
 T = sp.array(T)
 P = sp.array(P)
+V = sp.array(V)
 E_avg = sp.mean(E[opts.nskip:-1])
 T_avg = sp.mean(T[opts.nskip:-1])
 P_avg = sp.mean(P[opts.nskip:-1])
+V_avg = sp.mean(V[opts.nskip:-1])
 
 # Plot the statistics
 fig1, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True)
