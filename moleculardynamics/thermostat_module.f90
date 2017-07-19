@@ -130,8 +130,12 @@ contains
     allocate(th%Q(n_nhc))
 
     th%eta = zero
-    th%Q = one
-    th%v_eta = sqrt(two*th%T_ext/th%Q(1))
+    if (th%n_nhc > 0) then
+      th%Q = one
+      th%v_eta = sqrt(two*th%T_ext/th%Q(1))
+    else
+      th%v_eta = zero
+    end if
     th%G_nhc = zero
     call th%get_nhc_ke
 
@@ -259,9 +263,14 @@ contains
     ! passed variables
     class(type_thermostat), intent(inout) :: th
 
-    th%e_nhc = half*sum(th%Q*th%v_eta**2)
-    th%e_nhc = th%e_nhc + th%ndof*th%k_B_md*th%T_ext*th%eta(1)
-    th%e_nhc = th%e_nhc + th%k_B_md*th%T_ext*sum(th%eta(2:))
+    if (th%n_nhc > 0) then
+      th%e_nhc = half*sum(th%Q*th%v_eta**2)
+      th%e_nhc = th%e_nhc + th%ndof*th%k_B_md*th%T_ext*th%eta(1)
+      th%e_nhc = th%e_nhc + th%k_B_md*th%T_ext*sum(th%eta(2:))
+    else
+      th%e_nhc = zero
+    end if
+    
   end subroutine get_nhc_ke
 
 end module thermostat_module

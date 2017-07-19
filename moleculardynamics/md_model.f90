@@ -4,13 +4,18 @@ use datatypes
 
 implicit none
 
-type model
+type type_model
   
   ! Positions, velocities, forces
   real(double), dimension(:,:), allocatable :: r, r0
-  real(double), dimension(:,:), allocatable :: r_cart, r_cart0
+  real(double), dimension(:,:), allocatable :: rcart, rcart0
   real(double), dimension(:,:), allocatable :: v, v0
   real(double), dimension(:,:), allocatable :: f, f0
+
+  ! Species
+  integer, allocatable, dimension(:)        :: species
+  character(2), allocatable, dimension(:)   :: spec_label
+  real(double), allocatable, dimension(:)   :: mass
 
   ! box
   real(double), dimension(3,3)              :: h, h0
@@ -18,9 +23,11 @@ type model
   !  MD variables
   integer                                   :: nstep
   real(double)                              :: dt
+  character(3)                              :: ensemble
 
   ! Microscopic variables
   integer                                   :: nat
+  integer                                   :: nspec
   integer                                   :: ndof
 
   ! Thermodynamic variables
@@ -55,23 +62,27 @@ type model
 contains
   procedure :: init_model
 
-end type model
+end type type_model
 
 contains
 
-  subroutine init_model(mdl, nat)
+  subroutine init_model(mdl, nat, nspec)
 
     ! passed variables
-    class(model), intent(inout)     :: mdl
-    integer, intent(in)             :: nat
+    class(type_model), intent(inout)  :: mdl
+    integer, intent(in)               :: nat, nspec
 
     mdl%nat = nat
+    mdl%nspec = nspec
     mdl%ndof = 3*nat
 
     allocate(mdl%r(nat,3), mdl%r0(nat,3))
-    allocate(mdl%r_cart(nat,3), mdl%r_cart0(nat,3))
+    allocate(mdl%rcart(nat,3), mdl%rcart0(nat,3))
     allocate(mdl%v(nat,3), mdl%v0(nat,3))
     allocate(mdl%f(nat,3), mdl%f0(nat,3))
+    allocate(mdl%species(nat))
+    allocate(mdl%spec_label(nspec))
+    allocate(mdl%mass(nspec))
 
   end subroutine init_model
 

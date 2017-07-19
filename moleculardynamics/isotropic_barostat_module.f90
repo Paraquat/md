@@ -9,6 +9,7 @@ implicit none
 type type_iso_barostat
 
   character(40)                 :: baro_type
+  character(3)                  :: ensemble
   real(double), dimension(3,3)  :: h      ! current cell
   real(double), dimension(3,3)  :: h_0    ! reference cell
   real(double), dimension(3,3)  :: stress
@@ -47,12 +48,13 @@ end type type_iso_barostat
 
 contains
 
-  subroutine init_barostat_iso(baro, baro_type, h_ref, P_ext, nat, ndof, &
-                               box_mass, volume, iprint)
+  subroutine init_barostat_iso(baro, baro_type, ensemble, h_ref, P_ext, nat, &
+                               ndof, box_mass, volume, iprint)
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)   :: baro
     character(40), intent(in)                 :: baro_type
+    character(3), intent(in)                  :: ensemble
     real(double), dimension(3,3), intent(in)  :: h_ref
     real(double), intent(in)                  :: P_ext, box_mass, volume
     integer, intent(in)                       :: nat, ndof, iprint
@@ -63,6 +65,7 @@ contains
 
     baro%iprint = iprint
     baro%baro_type = baro_type
+    baro%ensemble = ensemble
     baro%ndof = ndof
     baro%odnf = one + three/baro%ndof
     baro%W_eps = box_mass
@@ -111,12 +114,16 @@ contains
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: updating box force G_eps"
     akin = ke*two
     baro%P_int = P_int
-    baro%G_eps = (baro%odnf*akin + three*(P_int - &
+    baro%G_eps = -(baro%odnf*akin + three*(P_int - &
                   baro%P_ext)*volume)/baro%W_eps
     ! The force on the first NHC heat bath is required for thermostat coupling
-    G_nhc_1 = (akin + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
-    baro%G_nhc_1 = G_nhc_1
-    write(14,*) baro%P_int, baro%odnf*akin, baro%G_eps
+    if (baro%ensemble == 'npt') then
+      G_nhc_1 = (akin + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
+      baro%G_nhc_1 = G_nhc_1
+    else
+      baro%G_nhc_1 = zero
+    end if
+    write(14,*) baro%P_int, baro%odnf*akin, three*(P_int - baro%P_ext)*volume, baro%G_eps, baro%v_eps
 
   end subroutine update_G_eps
 

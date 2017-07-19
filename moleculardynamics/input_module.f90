@@ -128,8 +128,10 @@ subroutine read_input(inp, filename)
       read(param,*) inp%v_distr
       write(*,'("v_distr             ",a20)') inp%v_distr
     case ('nhc_mass')
-      read(param,*) inp%nhc_mass
-      write(*,'("nhc_mass            ",f20.6)') inp%nhc_mass
+      if (inp%n_nhc > 0) then
+        read(param,*) inp%nhc_mass
+        write(*,'("nhc_mass            ",f20.6)') inp%nhc_mass
+      end if
     case ('baro_type')
       read(param,*) inp%baro_type
       write(*,'("baro_type           ",a20)') inp%baro_type

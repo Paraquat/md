@@ -73,6 +73,8 @@ parser.add_argument('-m', '--mdin', action='store', dest='mdinfile',
                     default='md.in', help='MD parameters file')
 parser.add_argument('--skip', action='store', dest='nskip', default=0,
                     type=int, help='Number of equilibration steps to skip')
+parser.add_argument('--stop', action='store', dest='nstop', default=-1, 
+                    type=int, help='Number of last frame in analysis')
 
 opts = parser.parse_args()
 
@@ -100,9 +102,13 @@ E = []
 T = []
 P = []
 V = []
+
+count = 0
 with open(opts.statfile, 'r') as statfile:
   statfile.readline()
   for line in statfile:
+    if count == opts.nstop:
+      break
     if mdin_params['ensemble'] == 'nve':
       a, b, c, d, e, f = line.strip().split()
       step.append(int(a))
@@ -133,6 +139,18 @@ with open(opts.statfile, 'r') as statfile:
       T.append(float(h))
       P.append(float(i))
       V.append(float(j))
+    elif mdin_params['ensemble'] == 'nph':
+      a, b, c, d, e, f, g, h, i = line.strip().split()
+      step.append(int(a))
+      pe.append(float(b))
+      ke.append(float(c))
+      box.append(float(d))
+      pv.append(float(e))
+      E.append(float(f))
+      T.append(float(g))
+      P.append(float(h))
+      V.append(float(i))
+    count += 1
 
 step = sp.array(step)
 pe = sp.array(pe)
@@ -155,9 +173,10 @@ fig1, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True)
 plt.xlim((opts.nskip,step[-1]))
 ax1.plot(step, pe, 'r-', label='Potential energy')
 ax1.plot(step, ke, 'b-', label='Kinetic energy')
-if mdin_params['thermo_type'] == 'nhc':
-  ax1.plot(step, nhc, 'g-', label='NHC energy')
-if mdin_params['ensemble'] == 'npt':
+if mdin_params['ensemble'][2] == 't':
+  if mdin_params['thermo_type'] == 'nhc':
+    ax1.plot(step, nhc, 'g-', label='NHC energy')
+if mdin_params['ensemble'][1] == 'p':
   ax1.plot(step, box, 'c-', label='Box energy')
   ax1.plot(step, pv, 'm-', label='pV')
 ax2.plot(step, E)
@@ -206,6 +225,8 @@ with open(opts.dumpfile, 'r') as dumpfile:
       newframe = True
       if n < opts.nskip:
         continue
+      if n == opts.nstop:
+        break
       else:
         nframes += 1
       if nframes == 1:

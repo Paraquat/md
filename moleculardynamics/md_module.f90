@@ -15,13 +15,14 @@ implicit none
 
 type type_md
   type(type_cell)           :: p_t, p_t_dt
+  type(type_model)          :: mdl
   type(type_pairpotential)  :: pp
   type(type_thermostat)     :: th
   type(type_barostat)       :: baro
   type(type_iso_barostat)   :: iso_baro
   character(3)    :: ensemble
   integer         :: nstep, nspec, nat, ndof, iprint, dump_freq, tau_T, tau_P
-  integer         :: n_nhc
+  integer         :: n_nhc, n_mts, n_ys
   logical         :: shift, remove_com_v, dump
   character(40)   :: position_file, dump_file, stat_file, thermo_type, &
                      baro_type, init_distr, units
@@ -44,13 +45,14 @@ type type_md
     procedure :: get_kinetic_energy
     procedure :: get_pv
     procedure :: get_temperature
-    procedure :: get_pressure
     procedure :: get_stress
     procedure :: vVerlet_v
     procedure :: vVerlet_r
     procedure :: md_run
     procedure :: propagate_npt_mttk
+    procedure :: propagate_nph_mttk
     procedure :: propagate_iso_npt_mttk
+    procedure :: propagate_iso_nph_mttk
     procedure :: get_cons_qty
     procedure :: fire
     procedure :: dump_atom_arr
@@ -97,6 +99,17 @@ contains
     mdr%p_t = init_cell
     if (init_cell_cart .eqv. .false.) call mdr%p_t%cell_frac2cart
     mdr%nspec = mdr%p_t%nspec
+    mdr%nat = mdr%p_t%nat
+
+    call mdr%mdl%init_model(mdr%nat, mdr%nspec)
+    mdr%mdl%r = mdr%p_t%r
+    mdr%mdl%r0 = mdr%p_t%r
+    mdr%mdl%rcart = mdr%p_t%rcart
+    mdr%mdl%rcart0 = mdr%p_t%rcart
+    mdr%mdl%h = mdr%p_t%h
+    mdr%mdl%h0 = mdr%p_t%h
+    ! mdr%mdl%species = mdr%p_t%species
+
     call mdr%p_t_dt%init(mdr%p_t%nat, mdr%p_t%nspec, mdr%p_t%h, &
                          mdr%p_t%r, mdr%p_t%species)
     mdr%p_t_dt%V = mdr%p_t%V
@@ -120,6 +133,8 @@ contains
     mdr%baro_type = baro_type
     mdr%P_ext = P_ext
     mdr%tau_P = 1
+    mdr%n_mts = 1
+    mdr%n_ys = 1
 
     select case (mdr%units)
     case ('reduced-lj')
@@ -156,9 +171,10 @@ contains
                                     mdr%ndof, box_mass, mdr%iprint)
       else if (mdr%baro_type == 'iso-mttk') then ! isotropic cell variation
         mdr%ndof = mdr%ndof + 1
-        call mdr%iso_baro%init_barostat_iso(mdr%baro_type, mdr%p_t%h, &
-                                            mdr%P_ext, mdr%nat, mdr%ndof, &
-                                            box_mass, mdr%V, mdr%iprint)
+        call mdr%iso_baro%init_barostat_iso(mdr%baro_type, mdr%ensemble, &
+                                            mdr%p_t%h, mdr%P_ext, mdr%nat, &
+                                            mdr%ndof, box_mass, mdr%V, &
+                                            mdr%iprint)
       end if
     end if
 
@@ -246,7 +262,6 @@ contains
     write(*,*)
     call mdr%get_force_and_energy
     call mdr%get_stress
-    call mdr%get_pressure
 
     write(*,*)
     write(*,'(2x,a)') "Initial forces:"
@@ -255,7 +270,6 @@ contains
     end do
     write(*,*)
     call mdr%get_stress
-    call mdr%get_pressure
     call mdr%get_pv
     write(*,*)
 
@@ -438,28 +452,6 @@ contains
 
   end subroutine get_temperature
 
-  ! Compute the pressure using the virial
-  ! NB only correct in the NVT ensemble. FIX THIS!
-  subroutine get_pressure(mdr)
-
-    ! passed variables
-    class(type_md), intent(inout)   :: mdr
-
-    ! local variables
-    integer                         :: i
-
-    ! use f_ij*r_ij computed from pp_get_force_and_energy
-    ! mdr%P_int = mdr%nat*mdr%k_B_md*mdr%T_int/mdr%V + mdr%virial
-    mdr%P_int = zero
-    do i=1,3
-      mdr%P_int = mdr%P_int + mdr%stress(i,i)
-    end do
-    mdr%P_int = -mdr%P_int*third
-    write(*,'("  Virial           = ",f16.8)') mdr%virial
-    write(*,'("  Pressure         = ",f16.8)') mdr%P_int
-
-  end subroutine get_pressure
-
   ! Compute the stress tensor from the virial tensor from get_force_and_energy
   ! and the kinetic energy from get_kinetic_energy
   subroutine get_stress(mdr)
@@ -470,7 +462,7 @@ contains
     ! local variables
     integer                         :: i
 
-    mdr%stress = (one/mdr%V)*(-mdr%virial_ke + mdr%virial_tensor)
+    mdr%stress = (one/mdr%V)*(mdr%virial_ke + mdr%virial_tensor)
     if (mdr%iprint == 0) then
       write(*,*)
       write(*,'(4x,a36,4x,a36)') "Virial KE", "Virial r.F"
@@ -481,10 +473,18 @@ contains
       write(*,*)
     end if
 
+    mdr%P_int = zero
+    do i=1,3
+      mdr%P_int = mdr%P_int + mdr%stress(i,i)
+    end do
+    mdr%P_int = mdr%P_int*third
+
+    write(*,'("  Pressure         = ",f16.8)') mdr%P_int
     write(*,'(2x,a)') "Stress tensor:"
     do i=1,3
       write(*,'(4x,3f16.8)') mdr%stress(i,:)
     end do
+
   end subroutine get_stress
 
   ! Velocity Verlet dt/2 step for velocities
@@ -560,6 +560,13 @@ contains
         if (mdr%thermo_type == 'nhc') then
           call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t_dt)
         end if
+      case('nph')
+        if (mdr%baro_type == 'mttk') then
+          call mdr%propagate_nph_mttk(mdr%dt)
+        else if (mdr%baro_type == 'iso-mttk') then
+          call mdr%propagate_iso_nph_mttk(mdr%dt)
+        end if
+        call mdr%get_pv
       case('npt')
         if (mdr%baro_type == 'mttk') then
           call mdr%propagate_npt_mttk(mdr%dt)
@@ -604,6 +611,13 @@ contains
           call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t_dt)
           call mdr%th%get_nhc_ke
         end if
+      case('nph')
+        if (mdr%baro_type == 'mttk') then
+          call mdr%propagate_nph_mttk(mdr%dt)
+        else if (mdr%baro_type == 'iso-mttk') then
+          call mdr%propagate_iso_nph_mttk(mdr%dt)
+        end if
+        call mdr%get_pv
       case('npt')
         if (mdr%baro_type == 'mttk') then
           call mdr%propagate_npt_mttk(mdr%dt)
@@ -626,7 +640,6 @@ contains
       call mdr%get_cons_qty ! Compute the conserved quantity
       call mdr%get_temperature
       call mdr%get_stress
-      call mdr%get_pressure
       mdr%p_t%rcart = mdr%p_t_dt%rcart
       mdr%p_t%h = mdr%iso_baro%h
 
@@ -735,6 +748,14 @@ contains
 
   end subroutine propagate_npt_mttk
 
+  subroutine propagate_nph_mttk(mdr, dt)
+
+    ! passed variables
+    class(type_md), intent(inout)             :: mdr
+    real(double), intent(in)                  :: dt
+
+  end subroutine propagate_nph_mttk
+
   ! The velocity part of the update for the MTTK integrator. I'm putting this
   ! here because it requires thermostat/barostat coupling
   subroutine propagate_iso_npt_mttk(mdr, dt)
@@ -753,7 +774,6 @@ contains
     v_sfac = one
     ! Get the kinetic energy
     call mdr%get_stress
-    call mdr%get_pressure
     call mdr%get_kinetic_energy
     mdr%iso_baro%P_int = mdr%P_int
     ! Update forces on thermostat and barostat
@@ -819,6 +839,50 @@ contains
     mdr%v_t_dt = mdr%v_t*v_sfac
 
   end subroutine propagate_iso_npt_mttk
+
+  subroutine propagate_iso_nph_mttk(mdr, dt)
+
+    ! passed variables
+    class(type_md), intent(inout)             :: mdr
+    real(double), intent(in)                  :: dt
+
+    ! local variables
+    integer         :: i,j, k
+    real(double)    :: dtys ! Yoshida-Suzuki time step
+    real(double)    :: G_nhc_1 ! force on first NHC thermostat
+    real(double)    :: v_sfac, vscale
+
+    if (mdr%iprint == 0) write(*,'(4x,a)') "MTTK: Scaling velocities for isotropic MTTK barostat"
+    v_sfac = one
+
+    call mdr%get_stress
+    call mdr%get_kinetic_energy
+    mdr%iso_baro%P_int = mdr%P_int
+    ! Update forces on thermostat and barostat
+    call mdr%iso_baro%update_G_eps(mdr%ke, mdr%P_int, mdr%V, mdr%T_ext, &
+                                   one, G_nhc_1)
+    do i=1,mdr%n_mts ! MTS loop
+      do j=1,mdr%n_ys ! Yoshida-Suzuki loop
+        ! Update box velocities
+        call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
+        ! Update Particle velocities
+        vscale = exp((one + three/mdr%ndof)*mdr%iso_baro%v_eps)
+        v_sfac = v_sfac*vscale
+        mdr%ke = mdr%ke*vscale**2
+        ! Update the box forces
+        call mdr%iso_baro%update_G_eps(mdr%ke, mdr%virial, mdr%V, mdr%T_ext, &
+                                       one, G_nhc_1)
+        ! Update the box velocities
+        call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
+        ! Update the box ke
+        call mdr%iso_baro%get_box_ke_iso
+        ! Update the thermostat velocities
+      end do ! MTS loop
+    end do ! Yoshida-Suzuki loop
+
+    ! scale the particle velocities
+    mdr%v_t_dt = mdr%v_t*v_sfac
+  end subroutine propagate_iso_nph_mttk
 
   ! Get the conserved quantity for the dynamics
   subroutine get_cons_qty(mdr)
@@ -952,7 +1016,9 @@ contains
         if (mdr%thermo_type == 'nhc') then
           write(iunit,'(a10,9a16)') "step", "pe", "ke", "nhc", "box", "pV", "total", "T", "P", "V"
         end if
-      end select
+      case ('nph')
+        write(iunit,'(a10,8a16)') "step", "pe", "ke", "box", "pV", "total", "T", "P", "V"
+    end select
     end if
     select case (mdr%ensemble)
     case ('nve')
@@ -972,6 +1038,10 @@ contains
                                     mdr%ke_box, mdr%pv, mdr%h_prime, &
                                     mdr%T_int, mdr%P_int, mdr%V
       end if
+    case ('nph')
+        write(iunit,'(i10,8e16.6)') step, mdr%pe, mdr%ke, mdr%ke_box, &
+                                    mdr%pv, mdr%h_prime, mdr%T_int, &
+                                    mdr%P_int, mdr%V
     end select
 
   end subroutine stat_dump
