@@ -397,7 +397,7 @@ contains
           mdr%pe = mdr%pe + pe
           ! compute virial
           mdr%virial = mdr%virial + dot_product(f_ij, r_ij_cart)
-          mdr%virial_tensor = mdr%virial_tensor + &
+          mdr%virial_tensor = mdr%virial_tensor - &
                               tensor_product(f_ij, r_ij_cart)
         end if
       end do
@@ -558,7 +558,7 @@ contains
       select case (mdr%ensemble)
       case('nvt')
         if (mdr%thermo_type == 'nhc') then
-          call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t_dt)
+          call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t)
         end if
       case('nph')
         if (mdr%baro_type == 'mttk') then
@@ -574,9 +574,7 @@ contains
           call mdr%propagate_iso_npt_mttk(mdr%dt)
         end if 
       end select
-      mdr%v_t = mdr%v_t_dt
       call mdr%vVerlet_v(mdr%dt, half)   ! v_t -> v_t_dt
-      mdr%v_t = mdr%v_t_dt
 
       if (mdr%ensemble(2:2) == 'p') then ! constant pressure
         if (mdr%baro_type == 'mttk') then
@@ -608,7 +606,7 @@ contains
       select case (mdr%ensemble)
       case('nvt')
         if (mdr%thermo_type == 'nhc') then
-          call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t_dt)
+          call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t)
           call mdr%th%get_nhc_ke
         end if
       case('nph')
@@ -627,7 +625,6 @@ contains
         end if
         if (mdr%thermo_type == 'nhc') call mdr%th%get_nhc_ke
       end select
-      mdr%v_t = mdr%v_t_dt
 
       ! Update arrays and thermodyanmics quantities
       call mdr%update_v(mdr%remove_com_v)
@@ -641,7 +638,7 @@ contains
       call mdr%get_temperature
       call mdr%get_stress
       mdr%p_t%rcart = mdr%p_t_dt%rcart
-      mdr%p_t%h = mdr%iso_baro%h
+      if (mdr%ensemble(2:2) == 'p') mdr%p_t%h = mdr%iso_baro%h
 
       call mdr%stat_dump(stat_unit, s)
       if (mdr%dump .eqv. .true.) then
@@ -714,7 +711,6 @@ contains
         end do
         ! Update Particle velocities
         call mdr%baro%propagate_v_sys(dt, half, mdr%th%v_eta(1), mdr%v_t)
-        mdr%v_t = mdr%v_t_dt
         ! Get total ke
         call mdr%get_kinetic_energy
         ! Update the box forces
@@ -768,10 +764,8 @@ contains
     integer         :: i,j, k
     real(double)    :: dtys ! Yoshida-Suzuki time step
     real(double)    :: G_nhc_1 ! force on first NHC thermostat
-    real(double)    :: v_sfac, vscale
 
     if (mdr%iprint == 0) write(*,'(4x,a)') "MTTK: Scaling velocities for isotropic MTTK barostat"
-    v_sfac = one
     ! Get the kinetic energy
     call mdr%get_stress
     call mdr%get_kinetic_energy
@@ -799,10 +793,8 @@ contains
         call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
         call mdr%iso_baro%propagate_v_eps_2(dt, eighth, mdr%th%v_eta(1))
         ! Update Particle velocities
-        vscale = exp(-half*dt*(mdr%th%v_eta(1) + &
-                 (one + three/mdr%ndof)*mdr%iso_baro%v_eps))
-        v_sfac = v_sfac*vscale
-        mdr%ke = mdr%th%ke_system*vscale**2
+        call mdr%iso_baro%propagate_v_sys_iso(dt, half, mdr%th%v_eta(1), mdr%v_t)
+        call mdr%get_kinetic_energy
         mdr%th%ke_system = mdr%ke
         ! Update the box forces
         call mdr%iso_baro%update_G_eps(mdr%ke, mdr%virial, mdr%V, mdr%T_ext, &
@@ -812,8 +804,6 @@ contains
         do k=1,mdr%th%n_nhc
           call mdr%th%propagate_eta_k(k, dt, half)
         end do
-        ! Get total ke
-        ! call mdr%get_kinetic_energy
         ! Update the box velocities
         call mdr%iso_baro%propagate_v_eps_2(dt, eighth, mdr%th%v_eta(1))
         call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
@@ -835,9 +825,6 @@ contains
       end do ! MTS loop
     end do ! Yoshida-Suzuki loop
 
-    ! scale the particle velocities
-    mdr%v_t_dt = mdr%v_t*v_sfac
-
   end subroutine propagate_iso_npt_mttk
 
   subroutine propagate_iso_nph_mttk(mdr, dt)
@@ -850,10 +837,8 @@ contains
     integer         :: i,j, k
     real(double)    :: dtys ! Yoshida-Suzuki time step
     real(double)    :: G_nhc_1 ! force on first NHC thermostat
-    real(double)    :: v_sfac, vscale
 
     if (mdr%iprint == 0) write(*,'(4x,a)') "MTTK: Scaling velocities for isotropic MTTK barostat"
-    v_sfac = one
 
     call mdr%get_stress
     call mdr%get_kinetic_energy
@@ -866,9 +851,8 @@ contains
         ! Update box velocities
         call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
         ! Update Particle velocities
-        vscale = exp((one + three/mdr%ndof)*mdr%iso_baro%v_eps)
-        v_sfac = v_sfac*vscale
-        mdr%ke = mdr%ke*vscale**2
+        call mdr%iso_baro%propagate_v_sys_iso(dt, half, zero, mdr%v_t)
+        call mdr%get_kinetic_energy
         ! Update the box forces
         call mdr%iso_baro%update_G_eps(mdr%ke, mdr%virial, mdr%V, mdr%T_ext, &
                                        one, G_nhc_1)
@@ -876,12 +860,9 @@ contains
         call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
         ! Update the box ke
         call mdr%iso_baro%get_box_ke_iso
-        ! Update the thermostat velocities
       end do ! MTS loop
     end do ! Yoshida-Suzuki loop
 
-    ! scale the particle velocities
-    mdr%v_t_dt = mdr%v_t*v_sfac
   end subroutine propagate_iso_nph_mttk
 
   ! Get the conserved quantity for the dynamics

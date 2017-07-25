@@ -21,6 +21,7 @@ type type_model
   real(double), dimension(3,3)              :: h, h0
 
   !  MD variables
+  integer                                   :: step
   integer                                   :: nstep
   real(double)                              :: dt
   character(3)                              :: ensemble
@@ -38,7 +39,7 @@ type type_model
   real(double)                              :: Ep, Ep0
   real(double)                              :: enthalpy, enthalpy0
   real(double)                              :: pV, pV0
-  real(double)                              :: Hprime
+  real(double)                              :: H_prime
   real(double), dimension(3,3)              :: stress
 
   ! Thermostat
@@ -58,9 +59,13 @@ type type_model
   real(double)                              :: G_eps
   real(double)                              :: E_baro
   real(double), dimension(3,3)              :: c_g
+  real(double)                              :: E_box
 
 contains
   procedure :: init_model
+  procedure :: dump_mdl_atom_arr
+  procedure :: dump_frame
+  procedure :: mdl_stat_dump
 
 end type type_model
 
@@ -85,5 +90,110 @@ contains
     allocate(mdl%mass(nspec))
 
   end subroutine init_model
+
+ ! Dump the an atom array (position, force, velocity)
+  subroutine dump_mdl_atom_arr(mdl, iou, arr)
+
+    ! passed variables
+    class(type_model), intent(inout)          :: mdl
+    integer, intent(in)                       :: iou
+    real(double), dimension(:,:), intent(in)  :: arr
+
+    ! local variables
+    integer                           :: i
+    character(80)                     :: fmt
+
+    fmt = "(2i5,3e20.10)"
+    do i=1,mdl%nat
+      write(iou,fmt) i, mdl%species(i), arr(i,:)
+    end do
+
+  end subroutine dump_mdl_atom_arr
+
+  subroutine dump_frame(mdl, iunit, step)
+
+    ! passed variables
+    class(type_model), intent(inout)  :: mdl
+    integer, intent(in)               :: iunit
+    integer, intent(in)               :: step
+
+    ! local variables
+    integer                           :: i
+
+    write(iunit,'("frame ",i8)') step
+    write(iunit,'(a)') "cell_vectors"
+    do i=1,3
+      write(iunit,'(3f12.6)') mdl%h(i,:)
+    end do
+    write(iunit,'(a)') "end cell_vectors"
+    write(iunit,'(a)') "stress_tensor"
+    do i=1,3
+      write(iunit,'(3f12.6)') mdl%stress(i,:)
+    end do
+    write(iunit,'(a)') "end stress_tensor"
+    write(iunit,'(a)') "positions"
+    call mdl%dump_mdl_atom_arr(iunit, mdl%rcart)
+    write(iunit,'(a)') "end positions"
+    write(iunit,'(a)') "velocities"
+    call mdl%dump_mdl_atom_arr(iunit, mdl%v)
+    write(iunit,'(a)') "end velocities"
+    write(iunit,'(a)') "forces"
+    call mdl%dump_mdl_atom_arr(iunit, mdl%f)
+    write(iunit,'(a)') "end forces"
+    write(iunit,'(a)') "end frame"
+
+  end subroutine dump_frame
+
+ ! Dump thermodyanmic statistics
+  subroutine mdl_stat_dump(mdl, iunit, step)
+
+    ! passed variables
+    class(type_model), intent(inout)  :: mdl
+    integer, intent(in)               :: iunit
+    integer, intent(in)               :: step
+
+    if (step == 0) then
+      select case (mdl%ensemble)
+      case ('nve')
+        write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
+      case ('nvt')
+        if (mdl%thermo_type == 'nhc') then
+          write(iunit,'(a10,6a16)') "step", "pe", "ke", "nhc", "total", "T", "P"
+        else
+          write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
+        end if
+      case ('npt')
+        if (mdl%thermo_type == 'nhc') then
+          write(iunit,'(a10,9a16)') "step", "pe", "ke", "nhc", "box", "pV", "total", "T", "P", "V"
+        end if
+      case ('nph')
+        write(iunit,'(a10,8a16)') "step", "pe", "ke", "box", "pV", "total", "T", "P", "V"
+    end select
+    end if
+    select case (mdl%ensemble)
+    case ('nve')
+      write(iunit,'(i10,5e16.6)') step, mdl%Ep, mdl%Ek, mdl%H_prime, &
+                                  mdl%T, mdl%P
+    case ('nvt')
+      if (mdl%thermo_type == 'nhc') then
+        write(iunit,'(i10,6e16.6)') step, mdl%Ep, mdl%Ek, mdl%E_nhc, &
+                                    mdl%H_prime, mdl%T, mdl%P
+      else
+        write(iunit,'(i10,5e16.6)') step, mdl%Ep, mdl%Ek, mdl%H_prime, &
+                                    mdl%T, mdl%P
+      end if
+    case ('npt')
+      if (mdl%thermo_type == 'nhc') then
+        write(iunit,'(i10,9e16.6)') step, mdl%Ep, mdl%Ek, mdl%E_nhc, &
+                                    mdl%E_box, mdl%pV, mdl%H_prime, &
+                                    mdl%T, mdl%P, mdl%V
+      end if
+    case ('nph')
+        write(iunit,'(i10,8e16.6)') step, mdl%Ep, mdl%Ek, mdl%E_box, &
+                                    mdl%pV, mdl%H_prime, mdl%T, mdl%P, mdl%V
+    end select
+
+  end subroutine mdl_stat_dump
+
 
 end module md_model

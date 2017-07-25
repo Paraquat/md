@@ -114,7 +114,7 @@ contains
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: updating box force G_eps"
     akin = ke*two
     baro%P_int = P_int
-    baro%G_eps = -(baro%odnf*akin + three*(P_int - &
+    baro%G_eps = (baro%odnf*akin + three*(P_int - &
                   baro%P_ext)*volume)/baro%W_eps
     ! The force on the first NHC heat bath is required for thermostat coupling
     if (baro%ensemble == 'npt') then
@@ -181,22 +181,17 @@ contains
   end subroutine propagate_v_eps_2
 
   ! coupling box and particle velocities
-  subroutine propagate_v_sys_iso(baro, dt, dtfac, v_eta_1, vin, vout)
+  subroutine propagate_v_sys_iso(baro, dt, dtfac, v_eta_1, v)
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)     :: baro
     real(double), intent(in)                    :: dt, dtfac
     real(double), intent(in)                    :: v_eta_1
-    real(double), dimension(:,:), intent(in)    :: vin
-    real(double), dimension(:,:), intent(out)   :: vout
-
-    ! local variables
-    real(double)                                :: vscale
+    real(double), dimension(:,:), intent(inout) :: v
 
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: propagating particle velocities"
 
-    vscale = exp(-dtfac*dt*v_eta_1)
-    vout = vin*vscale
+    v = v*exp(-dtfac*dt*(v_eta_1 + baro%odnf*baro%v_eps))
 
   end subroutine propagate_v_sys_iso
 
@@ -270,9 +265,9 @@ contains
     end do
     write(funit,'("eps:   ",e16.4)') baro%eps
     write(funit,'("v_eps: ",e16.4)') baro%v_eps
+    write(funit,'("ke_box:",e16.4)') baro%ke_box
     write(funit,'("G_eps: ",e16.4)') baro%G_eps
     write(funit,'("G_nhc: ",e16.4)') baro%G_nhc_1
-    write(funit,'("ke_box:",e16.4)') baro%ke_box
     write(funit,'("P_int: ",e16.4)') baro%P_int
     write(funit,'("V:     ",e16.4)') baro%V
     write(funit,*)
