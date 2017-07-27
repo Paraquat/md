@@ -10,11 +10,13 @@ type type_thermostat
 
   real(double)        :: T_ext, k_B_md, ke_system
   integer             :: nat, ndof, iprint
-  integer             :: tau_T   ! coupling time period of v-rescale thermostat
   integer             :: n_ys    ! Yoshida-Suzuki order
   integer             :: n_nhc   ! number of nh chains
   integer             :: mts_nhc ! number of NHC loops per time step
   real(double)        :: e_nhc   ! NHC contribution to the conserved term
+  real(double)        :: tau_T   ! temperature coupling time period
+  real(double)        :: dt      ! time step
+  real(double)        :: lambda  ! Berendsen scaling factor
   character(40)       :: th_type
   real(double), dimension(:), allocatable   :: eta   ! thermostat k position
   real(double), dimension(:), allocatable   :: v_eta ! thermostat k velocity
@@ -25,8 +27,8 @@ contains
 
   procedure :: init_thermostat
   procedure :: velocity_rescale
-  procedure :: weak_coupling_t
-  procedure :: propagate_vr_thermostat
+  procedure :: get_berendsen_thermo_sf
+  procedure :: berendsen_thermo_propagate
   procedure :: init_nhc
   procedure :: update_G_k
   procedure :: propagate_eta_k
@@ -40,19 +42,19 @@ end type type_thermostat
 contains
 
   ! Initialise the thermostat
-  subroutine init_thermostat(th, th_type, nat, ndof, T_ext, tau_T, n_nhc, &
+  subroutine init_thermostat(th, th_type, nat, ndof, dt, T_ext, tau_T, n_nhc, &
                              iprint, ke_system)
 
     ! passed variables
     class(type_thermostat), intent(inout)     :: th
     character(40), intent(in)                 :: th_type
-    integer, intent(in)                       :: nat, ndof, iprint, tau_T, &
-                                                 n_nhc
-    real(double), intent(in)                  :: T_ext, ke_system
+    integer, intent(in)                       :: nat, ndof, iprint, n_nhc
+    real(double), intent(in)                  :: T_ext, ke_system, dt, tau_T
 
     th%th_type = th_type
     th%nat = nat
     th%ndof = ndof
+    th%dt = dt
     th%T_ext = T_ext
     th%iprint = iprint
     th%tau_T = tau_T
@@ -71,50 +73,40 @@ contains
 
     ! passed variables
     class(type_thermostat), intent(inout)       :: th
-    real(double), dimension(:,:), intent(inout) :: v
     real(double), intent(in)                    :: T_int
+    real(double), dimension(:,:), intent(inout) :: v
 
     ! local variables
     real(double)  :: lambda
 
     lambda = sqrt(th%T_ext/T_int)
     v = v*lambda
-    if (th%iprint == 0) write(*,'(6x,"Velocity rescale, lambda = ",f8.4)') lambda
+    if (th%iprint == 0) write(*,'(4x,"Velocity rescale, lambda = ",f8.4)') lambda
   end subroutine velocity_rescale
 
-  ! Berendsen weak coupling thermostat - a different type of velocity rescaling
-  subroutine weak_coupling_t(th, T_int, v)
+  subroutine get_berendsen_thermo_sf(th, T_int)
+
+    ! passed variables
+    class(type_thermostat), intent(inout)       :: th
+    real(double), intent(in)                    :: T_int
+
+    th%lambda = sqrt(one + (th%dt/th%tau_T)*(th%T_ext/T_int - one))
+    if (th%iprint == 0) then
+      write(*,'(4x,"Weak coupling, thermostat lambda = ",f8.4)') th%lambda
+    end if
+
+  end subroutine get_berendsen_thermo_sf
+
+  ! Berendsen weak coupling thermostat
+  subroutine berendsen_thermo_propagate(th, v)
 
     ! passed variables
     class(type_thermostat), intent(inout)       :: th
     real(double), dimension(:,:), intent(inout) :: v
-    real(double), intent(in)                    :: T_int
 
-    ! local variables
-    real(double)  :: lambda
+    v = v*th%lambda
 
-    lambda = sqrt(one + (one/th%tau_T)*(T_int/th%T_ext - one))
-    v = v*lambda
-    if (th%iprint == 0) write(*,'(6x,"Weak coupling, lambda = ",f8.4)') lambda
-  end subroutine weak_coupling_t
-
-  ! Update the thermostat
-  subroutine propagate_vr_thermostat(th, T_int, v)
-
-    ! passed variables
-    class(type_thermostat), intent(inout)       :: th
-    real(double), dimension(:,:), intent(inout) :: v
-    real(double), intent(in)                    :: T_int
-
-    if (th%iprint == 0) write(*,'(4x,a)') "Thermostat: rescaling velocities"
-    select case(th%th_type)
-    case ('velocity_rescale')
-      call th%velocity_rescale(T_int, v)
-    case ('weak_coupling')
-      call th%weak_coupling_t(T_int, v)
-    end select
-
-  end subroutine propagate_vr_thermostat
+  end subroutine berendsen_thermo_propagate
 
   ! Initialise the NHC with n_nhc heat baths
   subroutine init_nhc(th, n_nhc)

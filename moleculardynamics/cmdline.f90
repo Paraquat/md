@@ -22,13 +22,14 @@ type type_cmdline
   real(double)        :: P_ext
   integer             :: nsteps
   integer             :: dump_freq = 1
-  integer             :: tau_T = 1
   integer             :: n_nhc = 5
   logical             :: shift = .false.
   logical             :: comv = .false.
   logical             :: cart = .false.
   real(double), dimension(:), allocatable :: nhc_mass
   real(double)        :: boxm = one
+  real(double)       :: tau_T = one
+  real(double)       :: tau_P = one
 
   contains
     procedure :: print_help

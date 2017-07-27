@@ -29,14 +29,15 @@ module input_module
     ! Thermostat parameters
     character(40)   :: thermo_type = 'velocity_rescale'
     real(double)    :: T_ext                ! external temperature
-    integer         :: tau_T = 1            ! thermostat time period
-    integer         :: n_nhc = 5            ! lenght of Nose-Hoover chain
+    real(double)    :: tau_T = one          ! thermostat time period
+    integer         :: n_nhc = 5            ! length of Nose-Hoover chain
     real(double), dimension(:), allocatable :: nhc_mass
 
     ! Barostat paramters
     character(40)   :: baro_type
-    real(double)    :: P_ext
-    real(double)    :: box_mass = one
+    real(double)    :: P_ext                ! external pressure
+    real(double)    :: box_mass = one       ! box mass for extended-Lagrangian
+    real(double)    :: tau_P = one          ! barostat time period
 
   contains
     procedure :: read_input
@@ -118,7 +119,7 @@ subroutine read_input(inp, filename)
       write(*,'("T_ext               ",l20)') inp%T_ext
     case ('tau_T')
       read(param,*) inp%tau_T
-      write(*,'("tau_T               ",i20)') inp%tau_T
+      write(*,'("tau_T               ",f20.8)') inp%tau_T
     case ('n_nhc')
       read(param,*) inp%n_nhc
       write(*,'("n_nhc               ",i20)') inp%n_nhc
@@ -141,6 +142,9 @@ subroutine read_input(inp, filename)
     case ('box_mass')
       read(param,*) inp%box_mass
       write(*,'("box_mass            "f20.8)') inp%box_mass
+    case ('tau_P')
+      read(param,*) inp%tau_P
+      write(*,'("tau_P               "f20.8)') inp%box_mass
     end select
 
   end do

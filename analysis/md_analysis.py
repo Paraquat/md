@@ -127,18 +127,37 @@ with open(opts.statfile, 'r') as statfile:
         E.append(float(e))
         T.append(float(f))
         P.append(float(g))
+      elif mdin_params['thermo_type'] == 'berendsen':
+        a, b, c, d, e, f = line.strip().split()
+        step.append(int(a))
+        pe.append(float(b))
+        ke.append(float(c))
+        E.append(float(d))
+        T.append(float(e))
+        P.append(float(f))
     elif mdin_params['ensemble'] == 'npt':
-      a, b, c, d, e, f, g, h, i, j = line.strip().split()
-      step.append(int(a))
-      pe.append(float(b))
-      ke.append(float(c))
-      nhc.append(float(d))
-      box.append(float(e))
-      pv.append(float(f))
-      E.append(float(g))
-      T.append(float(h))
-      P.append(float(i))
-      V.append(float(j))
+      if 'mttk' in mdin_params['baro_type']:
+        a, b, c, d, e, f, g, h, i, j = line.strip().split()
+        step.append(int(a))
+        pe.append(float(b))
+        ke.append(float(c))
+        nhc.append(float(d))
+        box.append(float(e))
+        pv.append(float(f))
+        E.append(float(g))
+        T.append(float(h))
+        P.append(float(i))
+        V.append(float(j))
+      if mdin_params['baro_type'] == 'berendsen':
+        a, b, c, d, e, f, g, h, = line.strip().split()
+        step.append(int(a))
+        pe.append(float(b))
+        ke.append(float(c))
+        pv.append(float(d))
+        E.append(float(e))
+        T.append(float(f))
+        P.append(float(g))
+        V.append(float(h))
     elif mdin_params['ensemble'] == 'nph':
       a, b, c, d, e, f, g, h, i = line.strip().split()
       step.append(int(a))
@@ -177,7 +196,8 @@ if mdin_params['ensemble'][2] == 't':
   if mdin_params['thermo_type'] == 'nhc':
     ax1.plot(step, nhc, 'g-', label='NHC energy')
 if mdin_params['ensemble'][1] == 'p':
-  ax1.plot(step, box, 'c-', label='Box energy')
+  if 'mttk' in mdin_params['baro_type']:
+    ax1.plot(step, box, 'c-', label='Box energy')
   ax1.plot(step, pv, 'm-', label='pV')
 ax2.plot(step, E)
 ax2.plot((opts.nskip,step[-1]), (E_avg,E_avg), '-',

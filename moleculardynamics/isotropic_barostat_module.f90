@@ -10,29 +10,39 @@ type type_iso_barostat
 
   character(40)                 :: baro_type
   character(3)                  :: ensemble
+  real(double)                  :: dt
+  integer                       :: iprint
+  integer                       :: nat
+  integer                       :: ndof   ! degrees of freedom
+  real(double)                  :: k_B_md
   real(double), dimension(3,3)  :: h      ! current cell
   real(double), dimension(3,3)  :: h_0    ! reference cell
   real(double), dimension(3,3)  :: stress
   real(double)                  :: V      ! box volume
   real(double)                  :: V_ref  ! reference box volume
-  real(double)                  :: eps    ! third*log(V/V_ref)
-  real(double)                  :: eps_ref ! reference cell epsilon
   real(double)                  :: P_int  ! internal pressure excluding kinetic
   real(double)                  :: P_ext  ! applied pressure
+
+  ! MTTK variables
+  real(double)                  :: eps    ! third*log(V/V_ref)
+  real(double)                  :: eps_ref ! reference cell epsilon
   real(double)                  :: W_eps  ! box mass
   real(double)                  :: v_eps  ! box velocity
   real(double)                  :: G_eps  ! box force
   real(double)                  :: G_nhc_1 ! force from first NHC heat bath
-  integer                       :: iprint
-  integer                       :: nat
-  integer                       :: ndof   ! degrees of freedom
   real(double)                  :: ke_box ! box kinetic energy
-  real(double)                  :: k_B_md
   real(double)                  :: odnf   ! 1 + d/N_f
+
+  ! Berendsen variables
+  real(double)                  :: tau_P  ! pressure coupling time constant
+  real(double)                  :: beta   ! Isothermal compressibility
+  real(double)                  :: mu     ! Berensen scaling factor
 
 contains
 
   procedure :: init_barostat_iso
+  procedure :: get_berendsen_baro_sf
+  procedure :: berendsen_baro_propagate
   procedure :: get_box_ke_iso
   procedure :: update_G_eps
   procedure :: propagate_eps_1
@@ -48,43 +58,75 @@ end type type_iso_barostat
 
 contains
 
-  subroutine init_barostat_iso(baro, baro_type, ensemble, h_ref, P_ext, nat, &
-                               ndof, box_mass, volume, iprint)
+  subroutine init_barostat_iso(baro, baro_type, ensemble, dt, h_ref, P_ext, &
+                               nat, ndof, box_mass, volume, tau_P, iprint)
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)   :: baro
     character(40), intent(in)                 :: baro_type
     character(3), intent(in)                  :: ensemble
     real(double), dimension(3,3), intent(in)  :: h_ref
-    real(double), intent(in)                  :: P_ext, box_mass, volume
+    real(double), intent(in)                  :: P_ext, box_mass, volume, &
+                                                 tau_P, dt
     integer, intent(in)                       :: nat, ndof, iprint
 
     ! Local variables
     integer       :: i
-    real(double)  :: W_eps
 
     baro%iprint = iprint
     baro%baro_type = baro_type
     baro%ensemble = ensemble
+    baro%dt = dt
     baro%ndof = ndof
     baro%odnf = one + three/baro%ndof
-    baro%W_eps = box_mass
+    baro%k_B_md = one
     baro%h_0 = h_ref
     baro%h = h_ref
+    baro%P_ext = P_ext
 
-    ! initialise epsilon
+    ! initialise MTTK
     baro%V_ref = volume
     baro%V = baro%V_ref
     baro%eps_ref = third*log(baro%V/baro%V_ref)
     baro%eps = baro%eps_ref
-
     baro%v_eps = zero
-    baro%k_B_md = one
-
+    baro%W_eps = box_mass
     baro%ke_box = zero
+
+    ! Intialise Berendsen
+    baro%beta = one
+    baro%tau_P = tau_P
 
   end subroutine init_barostat_iso
 
+  ! Compute the pressure scaling factor. This is done separately because the
+  ! rescaling should not affect the velocity
+  subroutine get_berendsen_baro_sf(baro, P_int)
+
+    ! Passed variables
+    class(type_iso_barostat), intent(inout)     :: baro
+    real(double), intent(in)                    :: P_int
+
+    baro%mu = (one - (baro%dt/baro%tau_P)*baro%beta*(baro%P_ext - P_int))**third
+    if (baro%iprint == 0) then
+      write(*,'(4x,"Weak coupling barostat, mu = ",f8.4)') baro%mu
+    end if
+
+  end subroutine get_berendsen_baro_sf
+
+  ! Scale the particle coordinates and box according to the Berendsen weak
+  ! coupling method
+  subroutine berendsen_baro_propagate(baro, r, h)
+
+    ! Passed variables
+    class(type_iso_barostat), intent(inout)     :: baro
+    real(double), dimension(:,:), intent(inout) :: r
+    real(double), dimension(3,3), intent(inout) :: h
+
+    h = h*baro%mu
+    r = r*baro%mu
+
+  end subroutine berendsen_baro_propagate
 
   ! Get the box kinetic energy
   subroutine get_box_ke_iso(baro)
@@ -97,16 +139,13 @@ contains
   end subroutine get_box_ke_iso
 
   ! Update the box forces
-  subroutine update_G_eps(baro, ke, P_int, volume, T_ext, Q_1, G_nhc_1)
+  subroutine update_G_eps(baro, ke, P_int, volume)
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)   :: baro
     real(double), intent(in)                  :: ke
     real(double), intent(in)                  :: P_int
     real(double), intent(in)                  :: volume
-    real(double), intent(in)                  :: T_ext
-    real(double), intent(in)                  :: Q_1 ! mass of NHC k=1
-    real(double), intent(out)                 :: G_nhc_1 ! force on NHC k=1
 
     ! local variables
     real(double)                              :: akin
@@ -116,13 +155,7 @@ contains
     baro%P_int = P_int
     baro%G_eps = (baro%odnf*akin + three*(P_int - &
                   baro%P_ext)*volume)/baro%W_eps
-    ! The force on the first NHC heat bath is required for thermostat coupling
-    if (baro%ensemble == 'npt') then
-      G_nhc_1 = (akin + baro%ke_box - baro%ndof*baro%k_B_md*T_ext)/Q_1
-      baro%G_nhc_1 = G_nhc_1
-    else
-      baro%G_nhc_1 = zero
-    end if
+
     write(14,*) baro%P_int, baro%odnf*akin, three*(P_int - baro%P_ext)*volume, baro%G_eps, baro%v_eps
 
   end subroutine update_G_eps
@@ -198,14 +231,13 @@ contains
   ! coupling box and particle positions. This is a little complicated and
   ! contains a polynomial expansion of sinh(x)/x, so I will do it in one
   ! subroutine for now, as in the MTTK paper.
-  subroutine propagate_r_sys(baro, dt, dtfac, v, rin, rout)
+  subroutine propagate_r_sys(baro, dt, dtfac, v, r)
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)     :: baro
     real(double), intent(in)                    :: dt, dtfac
     real(double), dimension(:,:), intent(in)    :: v
-    real(double), dimension(:,:), intent(in)    :: rin
-    real(double), dimension(:,:), intent(out)   :: rout
+    real(double), dimension(:,:), intent(inout) :: r
 
     ! local variables
     integer                                     :: i, j
@@ -218,7 +250,7 @@ contains
     sinhx_x = exp_sinhx_x(dtfac*dt*baro%v_eps)
     rscale = exp_v_eps**2
     vscale = exp_v_eps*sinhx_x*dt
-    rout = rin*rscale + v*vscale
+    r = r*rscale + v*vscale
 
   end subroutine propagate_r_sys
 
@@ -263,11 +295,15 @@ contains
     do i=1,3
       write(funit,'(4x,3f12.4)') baro%stress(i,:)
     end do
-    write(funit,'("eps:   ",e16.4)') baro%eps
-    write(funit,'("v_eps: ",e16.4)') baro%v_eps
-    write(funit,'("ke_box:",e16.4)') baro%ke_box
-    write(funit,'("G_eps: ",e16.4)') baro%G_eps
-    write(funit,'("G_nhc: ",e16.4)') baro%G_nhc_1
+    if (baro%baro_type == 'mttk' .or. baro%baro_type == 'iso-mttk') then
+      write(funit,'("eps:   ",e16.4)') baro%eps
+      write(funit,'("v_eps: ",e16.4)') baro%v_eps
+      write(funit,'("ke_box:",e16.4)') baro%ke_box
+      write(funit,'("G_eps: ",e16.4)') baro%G_eps
+      write(funit,'("G_nhc: ",e16.4)') baro%G_nhc_1
+    else if (baro%baro_type == 'berendsen') then
+      write(funit,'("mu:    ",e16.4)') baro%mu
+    end if
     write(funit,'("P_int: ",e16.4)') baro%P_int
     write(funit,'("V:     ",e16.4)') baro%V
     write(funit,*)
