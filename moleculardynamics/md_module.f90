@@ -175,6 +175,7 @@ contains
                                             mdr%nat, mdr%ndof, box_mass, &
                                             mdr%V, mdr%tau_p, mdr%iprint)
       else if (mdr%baro_type == 'berendsen') then ! isotropic cell variation
+        mdr%ndof = mdr%ndof + 1
         call mdr%iso_baro%init_barostat_iso(mdr%baro_type, mdr%ensemble, &
                                             mdr%dt, mdr%p_t%h, mdr%P_ext, &
                                             mdr%nat, mdr%ndof, box_mass, &
@@ -822,10 +823,9 @@ contains
 
     if (mdr%iprint == 0) write(*,'(4x,a)') "MTTK: Scaling velocities for isotropic MTTK barostat"
     ! Get the stress, pressure and kinetic energy
-    call mdr%get_stress
     call mdr%get_kinetic_energy
+    call mdr%get_stress
     call mdr%iso_baro%get_box_ke_iso
-    mdr%iso_baro%P_int = mdr%P_int
     ! Update forces on thermostat and barostat
     call mdr%iso_baro%update_G_eps(mdr%ke, mdr%P_int, mdr%V)
     do i=1,mdr%th%mts_nhc ! MTS loop
@@ -848,9 +848,10 @@ contains
         ! Update Particle velocities
         call mdr%iso_baro%propagate_v_sys_iso(dt, half, mdr%th%v_eta(1), mdr%v_t)
         call mdr%get_kinetic_energy
+        call mdr%get_stress
         mdr%th%ke_system = mdr%ke
         ! Update the box forces
-        call mdr%iso_baro%update_G_eps(mdr%ke, mdr%virial, mdr%V)
+        call mdr%iso_baro%update_G_eps(mdr%ke, mdr%P_int, mdr%V)
         ! Update thermostat positions
         do k=1,mdr%th%n_nhc
           call mdr%th%propagate_eta_k(k, dt, half)
@@ -893,8 +894,8 @@ contains
 
     if (mdr%iprint == 0) write(*,'(4x,a)') "MTTK: Scaling velocities for isotropic MTTK barostat"
 
-    call mdr%get_stress
     call mdr%get_kinetic_energy
+    call mdr%get_stress
     call mdr%iso_baro%get_box_ke_iso
     ! Update forces on thermostat and barostat
     call mdr%iso_baro%update_G_eps(mdr%ke, mdr%P_int, mdr%V)
@@ -905,8 +906,9 @@ contains
         ! Update Particle velocities
         call mdr%iso_baro%propagate_v_sys_iso(dt, half, zero, mdr%v_t)
         call mdr%get_kinetic_energy
+        call mdr%get_stress
         ! Update the box forces
-        call mdr%iso_baro%update_G_eps(mdr%ke, mdr%virial, mdr%V)
+        call mdr%iso_baro%update_G_eps(mdr%ke, mdr%P_int, mdr%V)
         ! Update the box velocities
         call mdr%iso_baro%propagate_v_eps_1(dt, quarter)
         ! Update the box ke

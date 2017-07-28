@@ -187,9 +187,8 @@ P_avg = sp.mean(P[opts.nskip:-1])
 V_avg = sp.mean(V[opts.nskip:-1])
 
 # Plot the statistics
-fig1, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True)
+fig1, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True, figsize=(7,10))
 
-plt.xlim((opts.nskip,step[-1]))
 ax1.plot(step, pe, 'r-', label='Potential energy')
 ax1.plot(step, ke, 'b-', label='Kinetic energy')
 if mdin_params['ensemble'][2] == 't':
@@ -205,18 +204,28 @@ ax2.plot((opts.nskip,step[-1]), (E_avg,E_avg), '-',
 ax3.plot(step, T)
 ax3.plot((opts.nskip,step[-1]), (T_avg,T_avg), '-',
       label=r'$\langle T \rangle$ = {0:<12.4f}'.format(T_avg))
-ax4.plot(step, P)
-ax4.plot((opts.nskip,step[-1]), (P_avg,P_avg), '-',
+ax4.plot(step, P, 'b-')
+ax4.plot((opts.nskip,step[-1]), (P_avg,P_avg), 'b--',
       label=r'$\langle P \rangle$ = {0:<12.4f}'.format(P_avg))
+ax5 = ax4.twinx()
+ax5.plot(step, V, 'r-')
+ax5.plot((opts.nskip,step[-1]), (V_avg,V_avg), 'r--',
+      label=r'$\langle V \rangle$ = {0:<12.4f}'.format(V_avg))
 ax1.set_ylabel("E")
 ax2.set_ylabel("E")
 ax3.set_ylabel("T")
-ax4.set_ylabel("P")
+ax4.set_ylabel("P", color='b')
+ax5.set_ylabel('V', color='r')
+ax1.get_yaxis().set_label_coords(-0.1, 0.5)
+ax2.get_yaxis().set_label_coords(-0.1, 0.5)
+ax3.get_yaxis().set_label_coords(-0.1, 0.5)
+ax4.get_yaxis().set_label_coords(-0.1, 0.5)
 ax1.legend()
 ax2.legend()
 ax3.legend()
-ax4.legend()
-
+ax4.legend(loc=2)
+ax5.legend(loc=0)
+plt.xlim((opts.nskip,step[-1]))
 plt.xlabel("MD step")
 fig1.subplots_adjust(hspace=0)
 plt.setp([a.get_xticklabels() for a in fig1.axes[:-1]], visible=False)
