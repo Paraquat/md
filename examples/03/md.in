@@ -1,0 +1,17 @@
+ensemble    npt
+dt          0.0001
+nsteps      1000000
+natoms      64
+dump_freq   100
+comv        T
+cart        F
+shift       T
+v_distr     uniform
+thermo_type nhc
+T_ext       0.1
+tau_T       1
+n_nhc       5
+nhc_mass    1.0 1.0 1.0 1.0 1.0
+baro_type   iso-mttk
+P_ext       0
+box_mass    100

@@ -1,0 +1,22 @@
+64 atom FCC crystalline single component Lennard-Jones. Sigma = 2.0 for a
+typical chemical bond-like characteristic length. Epsilon = 10.0 to prevent
+melting at T=0.1. Generates the NPT ensemble using an isotropic MTTK barostat witha NHC thermostat of length 5.
+
+THe simulation is stable, but the structure changes from the intial FCC crystal
+to something else, but I'm not sure what the stable structure for a single
+component Lennard-Jones system is at finite temperature. The lattice parameter
+is smaller than expected from the equation of state, and the stress components
+are anisotropic. Note that it is sensitive to the pair potential cutoff.
+
+Running md without any command line arguments will default to looking for the
+file 'md.in'.
+
+md > md.out
+
+Visualise xsf trajectory using (assuming vmd is in your $PATH):
+
+vmd -e view.vmd
+
+Analyse the trajectory, skipping the first 1000 steps with:
+
+md_analysis.py --skip 1000
