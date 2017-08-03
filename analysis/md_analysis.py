@@ -66,9 +66,9 @@ def parse_frame(buf, f):
 parser = argparse.ArgumentParser(description='Analyse a MD trajectory',
                         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('-d', '--dump', action='store', dest='dumpfile',
-                    default='dump.out', help='MD dump file')
+                    default='dump.000', help='MD dump file')
 parser.add_argument('-s', '--stat', action='store', dest='statfile',
-                    default='stat.out', help='MD statistics file')
+                    default='stat.000', help='MD statistics file')
 parser.add_argument('-m', '--mdin', action='store', dest='mdinfile',
                     default='md.in', help='MD parameters file')
 parser.add_argument('--skip', action='store', dest='nskip', default=0,
@@ -207,15 +207,18 @@ ax3.plot((opts.nskip,step[-1]), (T_avg,T_avg), '-',
 ax4.plot(step, P, 'b-')
 ax4.plot((opts.nskip,step[-1]), (P_avg,P_avg), 'b--',
       label=r'$\langle P \rangle$ = {0:<12.4f}'.format(P_avg))
-ax5 = ax4.twinx()
-ax5.plot(step, V, 'r-')
-ax5.plot((opts.nskip,step[-1]), (V_avg,V_avg), 'r--',
-      label=r'$\langle V \rangle$ = {0:<12.4f}'.format(V_avg))
+if mdin_params['ensemble'][1] == 'p':
+  ax5 = ax4.twinx()
+  ax5.plot(step, V, 'r-')
+  ax5.plot((opts.nskip,step[-1]), (V_avg,V_avg), 'r--',
+        label=r'$\langle V \rangle$ = {0:<12.4f}'.format(V_avg))
 ax1.set_ylabel("E")
 ax2.set_ylabel("E")
 ax3.set_ylabel("T")
 ax4.set_ylabel("P", color='b')
-ax5.set_ylabel('V', color='r')
+if mdin_params['ensemble'][1] == 'p':
+  ax5.set_ylabel("V", color='r')
+ax4.set_xlabel("MD Step")
 ax1.get_yaxis().set_label_coords(-0.1, 0.5)
 ax2.get_yaxis().set_label_coords(-0.1, 0.5)
 ax3.get_yaxis().set_label_coords(-0.1, 0.5)
@@ -224,11 +227,11 @@ ax1.legend()
 ax2.legend()
 ax3.legend()
 ax4.legend(loc=2)
-ax5.legend(loc=0)
+if mdin_params['ensemble'][1] == 'p':
+  ax5.legend(loc=0)
 plt.xlim((opts.nskip,step[-1]))
-plt.xlabel("MD step")
 fig1.subplots_adjust(hspace=0)
-plt.setp([a.get_xticklabels() for a in fig1.axes[:-1]], visible=False)
+# plt.setp([a.get_xticklabels() for a in fig1.axes[:-1]], visible=False)
 fig1.savefig("stats.pdf", bbox_inches='tight')
 
 # Parse the dump.out dump file

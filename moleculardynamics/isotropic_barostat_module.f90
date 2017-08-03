@@ -29,14 +29,13 @@ type type_iso_barostat
   real(double)                  :: W_eps  ! box mass
   real(double)                  :: v_eps  ! box velocity
   real(double)                  :: G_eps  ! box force
-  real(double)                  :: G_nhc_1 ! force from first NHC heat bath
   real(double)                  :: ke_box ! box kinetic energy
   real(double)                  :: odnf   ! 1 + d/N_f
 
   ! Berendsen variables
   real(double)                  :: tau_P  ! pressure coupling time constant
   real(double)                  :: beta   ! Isothermal compressibility
-  real(double)                  :: mu     ! Berensen scaling factor
+  real(double)                  :: mu     ! Berendsen scaling factor
 
 contains
 
@@ -77,6 +76,7 @@ contains
     baro%baro_type = baro_type
     baro%ensemble = ensemble
     baro%dt = dt
+    baro%nat = nat
     baro%ndof = ndof
     baro%odnf = one + three/baro%ndof
     baro%k_B_md = one
@@ -155,8 +155,6 @@ contains
     baro%P_int = P_int
     baro%G_eps = (baro%odnf*akin + three*(P_int - &
                   baro%P_ext)*volume)/baro%W_eps
-
-    write(14,*) baro%P_int, baro%odnf*akin, three*(P_int - baro%P_ext)*volume, baro%G_eps, baro%v_eps
 
   end subroutine update_G_eps
 
@@ -300,7 +298,6 @@ contains
       write(funit,'("v_eps: ",e16.4)') baro%v_eps
       write(funit,'("ke_box:",e16.4)') baro%ke_box
       write(funit,'("G_eps: ",e16.4)') baro%G_eps
-      write(funit,'("G_nhc: ",e16.4)') baro%G_nhc_1
     else if (baro%baro_type == 'berendsen') then
       write(funit,'("mu:    ",e16.4)') baro%mu
     end if

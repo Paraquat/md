@@ -16,13 +16,16 @@ type type_cmdline
   character(40)       :: ttype = 'nhc'
   character(40)       :: btype = 'mttk'
   character(40)       :: init_distr = 'uniform'
+  character(40)       :: pbc_method = 'mic'
   character(3)        :: ensemble = 'nve'
   real(double)        :: dt
   real(double)        :: T_ext
   real(double)        :: P_ext
   integer             :: nsteps
   integer             :: dump_freq = 1
+  integer             :: cp_freq = 1000
   integer             :: n_nhc = 5
+  logical             :: restart = .false.
   logical             :: shift = .false.
   logical             :: comv = .false.
   logical             :: cart = .false.
@@ -51,6 +54,8 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-T,  --temp     [T_ext]     Initial/target temperature'
   write(*,'(a)')
   write(*,'(a)') 'Optional arguments:'
+  write(*,'(a)') '--restart       [restart]   restart from checkpoint'
+  write(*,'(a)') '--cp            [cp_freq]   checkpoint frequency (default 1000)'
   write(*,'(a)') '-pp, --ppfile   [ppfile]    input pair potential file (default pp.in)'
   write(*,'(a)') '-i,  --sfile    [sfile]     input structure file (default cell.in)'
   write(*,'(a)') '-o,  --out      [outfile]   output file (default md.out)'
@@ -64,7 +69,8 @@ subroutine print_help(cmdl)
   write(*,'(a)') '-nh, --n_nhc    [n_nhc]     Length of Nose-Hoover chain (default 5)'
   write(*,'(a)') '-ba, --btype    [btype]     Barostat type'
   write(*,'(a)') '-P,  --press    [P_ext]     External pressure'
-  write(*,'(a)') '-Wh, --box_mass [boxm]      External pressure'
+  write(*,'(a)') '-Wh, --box_mass [boxm]      Box mass'
+  write(*,'(a)') '--pbc           [pbc]       PBC method'
 
 end subroutine print_help
 
@@ -160,6 +166,17 @@ subroutine get_args(cmdl, args)
       case ('-c', '--cart')
         cmdl%cart=.true.
         i=i+1
+      case ('--restart')
+        cmdl%restart = .true.
+        i=i+1
+      case ('--cp')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%cp_freq
+        i=i+2
+      case ('--pbc')
+        call get_command_argument(i+1, arg)
+        read(arg,*) cmdl%pbc_method
+        i=i+2
       case default
         write(*,'(a,a,/)') 'Unrecognised command line option: ', arg
         call cmdl%print_help()

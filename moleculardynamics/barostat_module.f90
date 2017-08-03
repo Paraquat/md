@@ -9,24 +9,40 @@ implicit none
 type type_barostat
 
   character(40)                 :: baro_type
-  real(double)                  :: P_ext  ! applied pressure
-  real(double)                  :: W_h    ! box mass
-  real(double), dimension(3,3)  :: h      ! box matrix
-  real(double), dimension(3,3)  :: v_h    ! box velocity
-  real(double), dimension(3,3)  :: stress ! stress tensor
-  real(double), dimension(3,3)  :: virial_ke ! ke contribution to stress tensor
-  real(double), dimension(3,3)  :: G_h    ! box force
-  real(double), dimension(3,3)  :: ident  ! 3x3 identity matrix
-  real(double), dimension(3,3)  :: c_g    ! eigenvectors 
-  real(double), dimension(3)    :: lambda ! eigenvalues
-  integer                       :: iprint, nat, ndof
-  real(double)                  :: ke_box
+  character(3)                  :: ensemble
+  real(double)                  :: dt
+  integer                       :: iprint
+  integer                       :: nat
+  integer                       :: ndof
   real(double)                  :: k_B_md
+
+  real(double)                  :: P_int    ! internal pressure
+  real(double)                  :: P_ext    ! applied pressure
+  real(double)                  :: V
+  real(double), dimension(3,3)  :: h        ! current cell
+  real(double), dimension(3,3)  :: h_0      ! refernce cell
+  real(double), dimension(3,3)  :: stress   ! stress tensor
+  real(double), dimension(3,3)  :: virial_ke ! ke contribution to stress tensor
+
+  ! MTTK variables
+  real(double)                  :: W_h      ! box mass
+  real(double), dimension(3,3)  :: v_h      ! box velocity
+  real(double), dimension(3,3)  :: G_h      ! box force
+  real(double), dimension(3)    :: G_nhc_1  !
+  real(double), dimension(3,3)  :: ident    ! 3x3 identity matrix
+  real(double), dimension(3,3)  :: onfm     ! ident*(1/ndof)
+  real(double), dimension(3,3)  :: c_g      ! eigenvectors 
+  real(double), dimension(3)    :: lambda   ! eigenvalues
+  real(double)                  :: ke_box
+
+  ! Berendsen variables
+  real(double)                  :: tau_P    ! pressure coupling time constatn
+  real(double)                  :: beta     ! isothermal compressibility
+  real(double)                  :: mu       ! Berendsen scaling factor
 
 contains
 
   procedure :: init_barostat
-  procedure :: init_xs
   procedure :: get_lambda_cg
   procedure :: get_lambda_sfac
   procedure :: get_box_ke
@@ -43,45 +59,49 @@ end type type_barostat
 
 contains
 
-  subroutine init_barostat(baro, baro_type, P_ext, nat, ndof, box_mass, iprint)
+  subroutine init_barostat(baro, baro_type, ensemble, dt, h_ref, P_ext, nat, &
+                           ndof, box_mass, volume, tau_P, iprint)
 
     ! Passed variables
-    class(type_barostat), intent(inout)      :: baro
+    class(type_barostat), intent(inout)       :: baro
     character(40), intent(in)                 :: baro_type
-    real(double), intent(in)                  :: P_ext, box_mass
+    character(3), intent(in)                  :: ensemble
+    real(double), dimension(3,3), intent(in)  :: h_ref
+    real(double), intent(in)                  :: dt, P_ext, box_mass, tau_P, &
+                                                 volume
     integer, intent(in)                       :: nat, ndof, iprint
 
     ! Local variables
     integer       :: i
     real(double)  :: W_h
 
+    baro%iprint = iprint
     baro%baro_type = baro_type
+    baro%ensemble = ensemble
+    baro%dt = dt
     baro%nat = nat
     baro%ndof = ndof
-    baro%iprint = iprint
-
-    baro%v_h = zero
     baro%k_B_md = one
+    baro%h_0 = h_ref
+    baro%h = h_ref
+    baro%P_ext = P_ext
+    baro%V = volume
 
+    ! initialise MTTK
+    baro%v_h = zero
     baro%W_h = box_mass
-
+    baro%ke_box = zero
     baro%ident = zero
     do i=1,3
       baro%ident(i,i) = one
     end do
+    baro%onfm = (one/baro%ndof)*baro%ident
 
-    if (baro%baro_type == 'mttk') call baro%init_xs
+    ! initialise Berendsen
+    baro%beta = one
+    baro%tau_P = tau_P
 
   end subroutine init_barostat
-
-  ! General subroutine for initialiseing extended-system/Lagrangian barostats
-  ! (Andersen, Parrinello-Rahma, MTTK, ...)
-  subroutine init_xs(baro)
-
-    ! Passed variables
-    class(type_barostat), intent(inout)      :: baro
-
-  end subroutine init_xs
 
   ! Get the eigenvalues/vectors of v_h(0) + Tr[v_h(0)]/N_f + v_eta(1)
   subroutine get_lambda_cg(baro, v_eta)

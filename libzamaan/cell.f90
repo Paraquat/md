@@ -12,10 +12,15 @@ public :: type_cell
 type type_cell
   integer         :: nat
   integer         :: nspec
+  integer         :: nghost
+  integer         :: nat_ghost
+  integer         :: depth
   real(double)    :: V
-  real(double), allocatable, dimension(:,:) :: r, rcart, dt
-  character(2), allocatable, dimension(:)   :: spec, species
-  integer, allocatable, dimension(:)        :: spec_count, spec_int
+  character(40)   :: pbc_method
+  real(double), allocatable, dimension(:,:) :: r, rcart, dt, rghost
+  character(2), allocatable, dimension(:)   :: spec, species, species_ghost
+  integer, allocatable, dimension(:)        :: spec_count, spec_int, &
+                                               spec_ghost_int
   real(double), allocatable, dimension(:)   :: mass
   real(double), dimension(3,3)              :: h, h_inv
   real(double), dimension(6)                :: param
@@ -32,7 +37,9 @@ type type_cell
     procedure :: cell_frac2cart
     procedure :: invert_lat
     procedure :: cart2frac
+    procedure :: cell_cart2frac
     procedure :: mic
+    procedure :: pbc_frac2cart
     procedure :: wrap_positions_cart
     procedure :: init
     procedure :: get_dt
@@ -48,6 +55,9 @@ type type_cell
     procedure :: write_xsf
     procedure :: supercell
     procedure :: cut_ortho
+    procedure :: cut_frac
+    procedure :: init_ghost
+    procedure :: update_ghost_cells
 end type type_cell
 
 contains
@@ -200,9 +210,9 @@ function frac2cart(p, v) result (r)
 
   w=v
   do i=1,3
-    if ( w(i) .gt. one ) then
-      w(i) = w(i)-one
-    else if ( w(i) .lt. zero) then
+    if (w(i) >= one) then
+      w(i) = w(i) - one
+    else if (w(i) < zero) then
       w(i) = w(i) + one
     end if
   end do
@@ -211,7 +221,7 @@ function frac2cart(p, v) result (r)
 end function frac2cart
 
 ! convert displacement from franctional to cartesian, shift coordinates
-! outside the unit cell
+! that are outside the unit cell
 function disp_frac2cart(p, v) result (r)
 
   class(type_cell), intent(inout)   :: p
@@ -223,10 +233,10 @@ function disp_frac2cart(p, v) result (r)
 
   w=v
   do i=1,3
-    if ( w(i) .gt. 0.5 ) then
-      w(i) = w(i)-1.
-    else if ( w(i) .lt. -0.5) then
-      w(i) = w(i) + 1.
+    if (w(i) > half) then
+      w(i) = w(i) - one
+    else if (w(i) < -half) then
+      w(i) = w(i) + one
     end if
   end do
 
@@ -289,24 +299,34 @@ function cart2frac(p,v) result(w)
   integer                           :: i
 
   w=matmul(v,p%h_inv)
-  do
-    do i=1,3
-      if (w(i) .ge. 1.) then
-        w(i)=w(i)-1.
-      else if (w(i) .lt. 0.) then
-        w(i)=w(i)+1.
+  outer: do i=1,3
+    inner: do
+      if (w(i) >= one) then
+        w(i) = w(i) - one
+      else if (w(i) < zero) then
+        w(i) = w(i) + one
+      else
+        exit inner
       end if
-
-      if (abs(w(i)-1.) .lt. 1.E-10) then
-        w(i) = 0.
-      end if
-    end do
-    if (maxval(w) .lt. 1.01 .and. minval(w) .gt. -1.E-12) then
-      exit
-    end if
-  end do
+    end do inner
+  end do outer
 
 end function cart2frac
+
+! Convert the cell from Cartesian to fractional
+subroutine cell_cart2frac(p)
+
+  class(type_cell), intent(inout)   :: p
+
+  integer :: i
+
+  if (allocated(p%r) .eqv. .false.) allocate(p%r(p%nat,3))
+
+  do i=1,p%nat
+    p%r(i,:) = p%cart2frac(p%rcart(i,:))
+  end do
+
+end subroutine cell_cart2frac
 
 ! Minimum image convention periodic boundary conditions
 ! (only works for orthorhombic cells)
@@ -323,6 +343,31 @@ function mic(p, coord1, coord2) result(relative)
     relative(i) = relative(i) - p%h(i,i)*nint(relative(i)/p%h(i,i))
   end do
 end function mic
+
+! Fractional coordinates for PBC
+function pbc_frac2cart(p, coord1, coord2) result(relative_cart)
+
+  class(type_cell), intent(inout)         :: p
+  real(double), dimension(3), intent(in)  :: coord1, coord2
+  real(double), dimension(3)              :: relative, relative_cart
+
+  integer                            :: i
+
+  relative = coord2 - coord1
+  outer: do i=1,3
+    inner: do
+      if (relative(i) >= one) then
+        relative(i) = relative(i) - one
+      else if (relative(i) < zero) then
+        relative(i) = relative(i) + one
+      else
+        exit inner
+      end if
+    end do inner 
+  end do outer
+  relative_cart = matmul(relative, p%h)
+
+end function pbc_frac2cart
 
 ! Wrap atoms into the unit cell (orthrhombic cell, Cartesian coordinates only)
 subroutine wrap_positions_cart(p)
@@ -754,6 +799,7 @@ end subroutine write_xsf
 ! Construct nx x ny x nz supercell
 subroutine supercell(p, sc_dim, psuper)
 
+  ! passed variables
   class(type_cell), intent(inout)   :: p
   integer, dimension(3), intent(in) :: sc_dim ! (/nx, ny, nz/)
 
@@ -796,11 +842,81 @@ end subroutine supercell
 ! calculate the distance cutoff for an orthogoanl unit cell ONLY
 subroutine cut_ortho(p, cutoff)
 
+  ! passed variables
   class(type_cell), intent(inout)   :: p
-
-  real(double), intent(out)                 :: cutoff
+  real(double), intent(out)         :: cutoff
 
   cutoff=min(p%h(1,1), p%h(2,2), p%h(3,3))/2
 end subroutine cut_ortho
+
+! calculate the distance cutoff for fractional coordinate PBC algorithm
+subroutine cut_frac(p, cutoff)
+
+  ! passed variables
+  class(type_cell), intent(inout)   :: p
+  real(double), intent(out)         :: cutoff
+
+  ! local variables
+  real(double)                      :: la, lb, lc
+
+  la = modulus(p%h(1,:))
+  lb = modulus(p%h(1,:))
+  lc = modulus(p%h(1,:))
+  cutoff = min(la, lb, lc)
+
+end subroutine cut_frac
+
+subroutine init_ghost(p, depth)
+
+  ! passed variables
+  class(type_cell), intent(inout)   :: p
+  integer, intent(in)               :: depth
+
+  ! local variables
+  integer                           :: i, j, n
+
+  p%depth = depth
+  p%pbc_method = 'ghost'
+  p%nghost = (2*depth + 1)**3
+  p%nat_ghost = p%nghost*p%nat
+  allocate(p%rghost(p%nat_ghost,3), p%species_ghost(p%nat_ghost), &
+           p%spec_ghost_int(p%nat_ghost))
+
+  n = 1
+  do i=1,p%nghost
+    do j=1,p%nat
+      p%species_ghost(n) = p%species(j)
+      p%spec_ghost_int(n) = p%spec_int(j)
+      n = n + 1
+    end do
+  end do
+
+end subroutine init_ghost
+
+! Generate ghost cells for pbc distance calculation
+subroutine update_ghost_cells(p)
+
+  ! passed variables
+  class(type_cell), intent(inout)   :: p
+
+  ! local variables
+  integer                           :: a, i, j, k, n
+  real(double), dimension(3)        :: rfrac, trans
+
+  n = 1
+  do i=-p%depth,p%depth
+    do j=-p%depth,p%depth
+      do k=-p%depth,p%depth
+        trans = (/real(i, double), real(j, double), real(k, double)/)
+        do a=1,p%nat
+          rfrac = p%r(a,:) + trans
+          p%rghost(n,:) = matmul(rfrac, p%h)
+          n = n+1
+        end do
+      end do
+    end do
+  end do
+
+end subroutine update_ghost_cells
 
 end module cell

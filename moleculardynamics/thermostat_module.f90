@@ -36,6 +36,7 @@ contains
   procedure :: propagate_v_eta_k_2
   procedure :: propagate_nvt_nhc
   procedure :: get_nhc_ke
+  procedure :: dump_thermo_state
 
 end type type_thermostat
 
@@ -264,5 +265,31 @@ contains
     end if
     
   end subroutine get_nhc_ke
+
+  ! Debugging routine: dump the state of the thermostat
+  subroutine dump_thermo_state(th, step, funit)
+
+    ! passed variables
+    class(type_thermostat), intent(inout) :: th
+    integer, intent(in)                   :: step, funit
+
+    ! local variables
+    integer                               :: i
+    character(40)                         :: fmt
+
+
+    write(fmt,'("(a8,",i4,"e16.4)")') th%n_nhc
+    write(funit,'("step   ",i12)') step
+    if (th%th_type == 'nhc') then
+      write(funit,fmt) "eta:    ", th%eta
+      write(funit,fmt) "v_eta:  ", th%v_eta
+      write(funit,fmt) "G_nhc:  ", th%G_nhc
+      write(funit,'("e_nhc:  ",e16.4)') th%e_nhc
+    else if (th%th_type == 'berendsen') then
+      write(funit,'("lambda: ",e16.4)') th%lambda
+    end if
+    write(funit,*)
+
+  end subroutine dump_thermo_state
 
 end module thermostat_module

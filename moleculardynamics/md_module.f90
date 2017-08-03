@@ -21,27 +21,32 @@ type type_md
   type(type_barostat)       :: baro
   type(type_iso_barostat)   :: iso_baro
   character(3)    :: ensemble
-  integer         :: nstep, nspec, nat, ndof, iprint, dump_freq
+  integer         :: nstep, step, nspec, nat, ndof, ghost_depth
+  integer         :: iprint, dump_freq, nrestart, cp_freq
   integer         :: n_nhc, n_mts, n_ys
-  logical         :: shift, remove_com_v, dump
-  character(40)   :: position_file, dump_file, stat_file, thermo_type, &
-                     baro_type, init_distr, units
-  integer, allocatable, dimension(:)          :: species
+  logical         :: shift, remove_com_v, dump, restart
+  character(40)   :: position_file, dump_file, stat_file, cp_file, &
+                     thermo_type, baro_type, init_distr, units, pbc_method
+  integer, allocatable, dimension(:)          :: species, species_ghost
   real(double), allocatable, dimension(:)     :: mass
   real(double), allocatable, dimension(:,:)   :: v_t
   real(double), allocatable, dimension(:,:)   :: f
   real(double), dimension(3,3)                :: stress, virial_ke, &
                                                  virial_tensor
   real(double), dimension(3)                  :: sumv
-  real(double)   :: pe, ke, T_int, T_ext, dt, sumv2, k_B_md, virial, P_int, &
-                    P_ext, V, e_nhc, ke_box, pv, e_npt, e_nvt, e_nve, &
-                    h_prime, enthalpy, tau_T, tau_P
+  real(double)   :: pe, ke, T_int, T_ext, dt, k_B_md, virial, P_int, P_ext, &
+                    V, e_nhc, ke_box, pv, e_npt, e_nvt, e_nve, h_prime, &
+                    enthalpy, tau_T, tau_P
 
   contains
     procedure :: init_md
+    procedure :: restart_md
     procedure :: init_velocities
     procedure :: update_v
     procedure :: get_force_and_energy
+    procedure :: get_force_and_energy_mic
+    procedure :: get_force_and_energy_ghost
+    procedure :: get_force_and_energy_frac
     procedure :: get_kinetic_energy
     procedure :: get_pv
     procedure :: get_temperature
@@ -58,18 +63,22 @@ type type_md
     procedure :: dump_atom_arr
     procedure :: md_dump
     procedure :: stat_dump
+    procedure :: write_checkpoint
+    procedure :: read_checkpoint
 end type type_md
 
 contains
 
   ! Initialise variables/velocities/allocate matrices for MD run
   ! TODO: Altogether too many arguments here, fix this.
-  subroutine init_md(mdr, init_cell, pp, init_cell_cart, ensemble, nstep, dt, &
-                     T_ext, vdistr, shift, remove_com_v, thermo_type, tau_T, &
-                     n_nhc, nhc_mass, baro_type, P_ext, box_mass, tau_P)
+  subroutine init_md(mdr, restart, init_cell, pp, init_cell_cart, ensemble, &
+                     nstep, dt, T_ext, vdistr, shift, remove_com_v, &
+                     thermo_type, tau_T, n_nhc, nhc_mass, baro_type, P_ext, &
+                     box_mass, tau_P)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
+    logical, intent(in)             :: restart 
     type(type_cell), intent(in)     :: init_cell
     type(type_pairpotential), intent(in)  :: pp
     character(3), intent(in)        :: ensemble
@@ -91,16 +100,29 @@ contains
 
     ! local variables
     integer                         :: i, j
+    real(double)                    :: la, lb, lc, cut_new
+    integer                         :: cp_unit
+    character(40)                   :: dumpfile_prefix, statfile_prefix, &
+                                       posfile_prefix, suffix
 
-    mdr%position_file = "trajectory.xsf"
-    mdr%dump_file = "dump.out"
-    mdr%stat_file = "stat.out"
-    write(*,'(a)') "Starting MD run"
-    write(*,*)
+    write(*,'(a)') "Initialising MD"
+    mdr%restart = restart
+    mdr%nrestart = 0
     mdr%p_t = init_cell
-    if (init_cell_cart .eqv. .false.) call mdr%p_t%cell_frac2cart
     mdr%nspec = mdr%p_t%nspec
     mdr%nat = mdr%p_t%nat
+    if (init_cell_cart .eqv. .false.) call mdr%p_t%cell_frac2cart
+    mdr%pp = pp
+
+    mdr%pbc_method = init_cell%pbc_method
+    mdr%p_t%pbc_method = mdr%pbc_method
+    if (mdr%pbc_method == 'ghost') then
+      la = sqrt(dot_product(mdr%p_t%h(1,:), mdr%p_t%h(1,:)))
+      lb = sqrt(dot_product(mdr%p_t%h(2,:), mdr%p_t%h(2,:)))
+      lc = sqrt(dot_product(mdr%p_t%h(3,:), mdr%p_t%h(3,:)))
+      mdr%ghost_depth = ceiling(min(la, lb, lc)/maxval(mdr%pp%r_cut))
+      call mdr%p_t%init_ghost(mdr%ghost_depth)
+    end if
 
     call mdr%mdl%init_model(mdr%nat, mdr%nspec)
     mdr%mdl%r = mdr%p_t%r
@@ -111,7 +133,6 @@ contains
     mdr%mdl%h0 = mdr%p_t%h
     ! mdr%mdl%species = mdr%p_t%species
 
-    mdr%pp = pp
     mdr%iprint = 0
     mdr%ensemble = ensemble
     mdr%nat = init_cell%nat
@@ -146,6 +167,10 @@ contains
     allocate(mdr%v_t(mdr%nat,3))
     allocate(mdr%f(mdr%nat,3))
     mdr%species = init_cell%spec_int
+    if (mdr%pbc_method == 'ghost') then
+      allocate(mdr%species_ghost(mdr%p_t%nat_ghost))
+      mdr%species_ghost = mdr%p_t%spec_ghost_int
+    end if
     do i=1,mdr%nat
       mdr%mass(i) = mdr%p_t%mass(mdr%p_t%spec_int(i))
     end do
@@ -166,8 +191,10 @@ contains
     if (mdr%ensemble(2:2) == 'p') then
       if (mdr%baro_type == 'mttk') then ! fully flexible cell
         mdr%ndof = mdr%ndof + 9
-        call mdr%baro%init_barostat(mdr%baro_type, mdr%P_ext, mdr%nat, &
-                                    mdr%ndof, box_mass, mdr%iprint)
+        call mdr%baro%init_barostat(mdr%baro_type, mdr%ensemble, mdr%dt, &
+                                    mdr%p_t%h, mdr%P_ext, mdr%nat, &
+                                    mdr%ndof, box_mass, mdr%V, mdr%tau_P, &
+                                    mdr%iprint)
       else if (mdr%baro_type == 'iso-mttk') then ! isotropic cell variation
         mdr%ndof = mdr%ndof + 1
         call mdr%iso_baro%init_barostat_iso(mdr%baro_type, mdr%ensemble, &
@@ -185,7 +212,7 @@ contains
 
     write(*,'(a)') "Simulation parameters:"
     write(*,'("Ensemble               ",a8)') mdr%ensemble
-    write(*,'("Number of steps        ",i8)') mdr%nstep
+    write(*,'("Number of steps        ",i12)') mdr%nstep
     write(*,'("Time step              ",f8.4)') mdr%dt
     write(*,'("Remove COM velocity    ",l8)') mdr%remove_com_v
     if (mdr%ensemble(3:3) == 't') then
@@ -221,6 +248,22 @@ contains
     write(*,'(a)') "Species and pair potential details:"
     write(*,'("Pair potential type    ",a)') mdr%pp%potential_type
     write(*,'("Pair potential cutoff  ",f8.4)') mdr%pp%r_cut
+    ! Adjust the pair potential cutoff if necessary
+    cut_new = maxval(mdr%pp%r_cut) + one
+    if (mdr%pbc_method == 'mic') then
+      call mdr%p_t%cut_ortho(cut_new)
+    else if (mdr%pbc_method == 'frac') then
+      call mdr%p_t%cut_frac(cut_new)
+    end if
+    if (cut_new < maxval(mdr%pp%r_cut)) then
+        write(*,'(2x,"Cutoff in pp.in is larger than shortest box side!")')
+        write(*,'(2x,"Adjusting r_cut to ",f8.4)') cut_new
+        do i=1,mdr%nspec
+          do j=1,mdr%nspec
+            if (mdr%pp%r_cut(i,j) > cut_new) mdr%pp%r_cut(i,j) = cut_new
+          end do
+        end do
+    end if
     write(*,'("Pair potential shift   ",l8)') mdr%shift
     write(*,'(2x,a)') "Sigma"
     do i=1,mdr%nspec
@@ -243,42 +286,91 @@ contains
                                mdr%p_t%spec_count(i), mdr%p_t%mass(i)
     end do
     write(*,*)
-    write(*,'(2x,a)') "Initial unit cell:"
-    do i=1,3
-      write(*,'(4x,3f12.6)') mdr%p_t%h(i,:)
-    end do
-    write(*,*)
-    write(*,'(2x,"Volume = ",f16.6)') mdr%V
-    write(*,*)
-    write(*,'(2x,a)') "Initial atomic positions:"
-    do i=1,mdr%nat
-      write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%p_t%rcart(i,:)
-    end do
 
-    ! initialise velocity
-    call mdr%init_velocities(mdr%init_distr)
+    if (mdr%restart .eqv. .false.) then
+      write(*,'(2x,a)') "Initial unit cell:"
+      do i=1,3
+        write(*,'(4x,3f12.6)') mdr%p_t%h(i,:)
+      end do
+      write(*,*)
+      write(*,'(2x,"Volume = ",f16.6)') mdr%V
+      write(*,*)
+      write(*,'(2x,a)') "Initial atomic positions:"
+      do i=1,mdr%nat
+        write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%p_t%rcart(i,:)
+      end do
 
-    write(*,*)
-    write(*,'(2x,a)') "Initial velocities:"
-    do i=1,mdr%nat
-      write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%v_t(i,:)
-    end do
+      ! initialise velocity
+      call mdr%init_velocities(mdr%init_distr)
+      write(*,*)
+      write(*,'(2x,a)') "Initial velocities:"
+      do i=1,mdr%nat
+        write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%v_t(i,:)
+      end do
+      write(*,*)
 
-    write(*,*)
-    call mdr%get_force_and_energy
-    call mdr%get_stress
+      call mdr%get_force_and_energy
+      write(*,*)
+      write(*,'(2x,a)') "Initial forces:"
+      do i=1,mdr%nat
+        write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%f(i,:)
+      end do
+      write(*,*)
+      call mdr%get_stress
+      call mdr%get_pv
+      write(*,*)
+    end if
 
-    write(*,*)
-    write(*,'(2x,a)') "Initial forces:"
-    do i=1,mdr%nat
-      write(*,'(4x,2i6,3f14.8)') i, mdr%species(i), mdr%f(i,:)
-    end do
-    write(*,*)
-    call mdr%get_stress
-    call mdr%get_pv
+    mdr%step = 1
+    ! Restart from checkpoint
+    mdr%cp_file = "checkpoint"
+    if (mdr%restart .eqv. .true.) then
+      write(*,'("Reading checkpoint file ", a)') mdr%cp_file
+      cp_unit   = 104
+      call mdr%read_checkpoint(cp_unit)
+      write(*,'("Restarting from step    ", i8)') mdr%step
+      write(*, '("This is restart number ", i8)') mdr%nrestart
+      call mdr%get_force_and_energy
+      call mdr%get_kinetic_energy
+      mdr%V = mdr%p_t%volume()
+      if (mdr%thermo_type == 'nhc')  then
+        mdr%th%ke_system = mdr%ke
+        call mdr%th%get_nhc_ke
+        mdr%e_nhc = mdr%th%e_nhc
+      end if
+      if (mdr%baro_type == 'iso-mttk')  then
+        call mdr%iso_baro%get_box_ke_iso
+        mdr%ke_box = mdr%iso_baro%ke_box
+      end if
+      if (mdr%baro_type == 'mttk') then
+        call mdr%baro%get_box_ke
+        mdr%ke_box = mdr%baro%ke_box
+      end if
+      call mdr%get_cons_qty
+      call mdr%get_temperature
+      call mdr%get_stress
+      call mdr%get_pv
+    end if
+
+    ! Change output file names based on restart number
+    dumpfile_prefix = "dump"
+    statfile_prefix = "stat"
+    posfile_prefix = "traj"
+    write(suffix,'(a,i3.3)') ".", mdr%nrestart
+    mdr%dump_file = trim(dumpfile_prefix) // trim(suffix)
+    mdr%stat_file = trim(statfile_prefix) // trim(suffix)
+    mdr%position_file = trim(posfile_prefix) // trim(suffix) // ".xsf"
     write(*,*)
 
   end subroutine init_md
+
+  ! Restart a MD run from a checkpoint file
+  subroutine restart_md(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+  end subroutine restart_md
 
   subroutine init_velocities(mdr, distr)
 
@@ -363,16 +455,26 @@ contains
       end do
     end if
 
-    ! update the sum of the squared velocity (for kinetic energy etc)
-    mdr%sumv2 = zero
-    do i=1,mdr%nat
-      mdr%sumv2 = mdr%sumv2 + sum(mdr%v_t(i,:)**2)
-    end do
-
   end subroutine update_v
 
-  ! Compute the potential energy and force on each atom, update the virial
+  ! wrapper to get force and energy
   subroutine get_force_and_energy(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    select case (mdr%pbc_method)
+    case ('mic')
+      call mdr%get_force_and_energy_mic
+    case ('ghost')
+      call mdr%get_force_and_energy_ghost
+    case ('frac')
+      call mdr%get_force_and_energy_frac
+    end select
+  end subroutine get_force_and_energy
+
+  ! Compute the potential energy and force on each atom, update the virial
+  subroutine get_force_and_energy_mic(mdr)
 
     ! passed variables
     class(type_md), intent(inout)   :: mdr
@@ -412,7 +514,99 @@ contains
                                         ! virial, used in iso-mttk barostat
     write(*,'("  Potential energy = ",e16.8)') mdr%pe
 
-  end subroutine get_force_and_energy
+  end subroutine get_force_and_energy_mic
+
+  ! Get force and energy using ghost cells (works for non-orthorhombic cells)
+  subroutine get_force_and_energy_ghost(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    ! local variables
+    integer                         :: iat, jat, s_i, s_j, mu, nu
+    real(double), dimension(3)      :: r_ij_cart, f_ij
+    real(double)                    :: mod_r_ij, mod_f, pe
+
+    mdr%pe = zero
+    mdr%f = zero
+    mdr%virial = zero
+    mdr%virial_tensor = zero
+    call mdr%p_t%update_ghost_cells
+
+    do iat=1,mdr%nat
+      do jat=1,mdr%p_t%nat_ghost
+        s_i = mdr%species(iat)
+        s_j = mdr%species_ghost(jat)
+        r_ij_cart = mdr%p_t%rghost(jat,:) - mdr%p_t%rcart(iat,:)
+        mod_r_ij = modulus(r_ij_cart)
+        if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
+          if (mod_r_ij > small) then
+            call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
+                                            mod_f, pe)
+            f_ij = mod_f*norm(r_ij_cart)
+            mdr%f(iat,:) = mdr%f(iat,:) + f_ij
+            mdr%pe = mdr%pe + pe
+            ! compute virial
+            mdr%virial = mdr%virial + dot_product(f_ij, r_ij_cart)
+            mdr%virial_tensor = mdr%virial_tensor + &
+                                tensor_product(f_ij, r_ij_cart)/mod_r_ij
+          end if
+        end if
+      end do
+    end do
+    mdr%pe = mdr%pe*half
+    mdr%virial_tensor = mdr%virial_tensor*half
+    mdr%virial = third*mdr%virial/mdr%V ! The configurational part of the &
+                                        ! virial, used in iso-mttk barostat
+    write(*,'("  Potential energy = ",e16.8)') mdr%pe
+
+  end subroutine get_force_and_energy_ghost
+
+  ! Compute the potential energy and force on each atom, update the virial
+  subroutine get_force_and_energy_frac(mdr)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+
+    ! local variables
+    integer                         :: iat, jat, s_i, s_j, mu, nu
+    real(double), dimension(3)      :: r_ij_cart, f_ij
+    real(double)                    :: mod_r_ij, mod_f, pe
+
+    mdr%pe = zero
+    mdr%f = zero
+    mdr%virial = zero
+    mdr%virial_tensor = zero
+
+    if (mdr%ensemble(2:2) == 'p') call mdr%p_t%invert_lat
+    call mdr%p_t%cell_cart2frac
+
+    do iat=1,mdr%nat
+      do jat=iat+1,mdr%nat
+        s_i = mdr%species(iat)
+        s_j = mdr%species(jat)
+        r_ij_cart = mdr%p_t%pbc_frac2cart(mdr%p_t%r(iat,:), mdr%p_t%r(jat,:))
+        mod_r_ij = modulus(r_ij_cart)
+        if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
+          call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
+                                          mod_f, pe)
+          f_ij = mod_f*norm(r_ij_cart)
+          mdr%f(iat,:) = mdr%f(iat,:) + f_ij
+          mdr%f(jat,:) = mdr%f(jat,:) - f_ij
+          mdr%pe = mdr%pe + pe
+          ! compute virial
+          mdr%virial = mdr%virial + dot_product(f_ij, r_ij_cart)
+          mdr%virial_tensor = mdr%virial_tensor + &
+                              tensor_product(f_ij, r_ij_cart)/mod_r_ij
+        end if
+      end do
+    end do
+    ! mdr%pe = mdr%pe*half
+    mdr%virial = third*mdr%virial/mdr%V ! The configurational part of the &
+                                        ! virial, used in iso-mttk barostat
+    write(*,'("  Potential energy = ",e16.8)') mdr%pe
+
+  end subroutine get_force_and_energy_frac
 
   ! Compute the kinetic energy
   subroutine get_kinetic_energy(mdr)
@@ -421,7 +615,7 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     ! local variables
-    integer   :: i, mu, nu
+    integer   :: i
 
     mdr%ke = zero
     mdr%virial_ke = zero
@@ -560,25 +754,36 @@ contains
     integer, intent(in)             :: s_start, s_end
 
     ! local variables
-    integer       :: s, traj_unit, dump_unit, stat_unit, debug_unit
+    integer       :: s, traj_unit, dump_unit, stat_unit, cp_unit, &
+                     debug_unit_1, debug_unit_2
     logical       :: d
 
     write(*,'(a)') "Starting main MD loop"
     traj_unit = 101
     dump_unit = 102
     stat_unit = 103
-    debug_unit = 104
-    s = 0
+    cp_unit   = 104
+    debug_unit_1 = 109
+    debug_unit_1 = 110
 
     open(unit=traj_unit, file=mdr%position_file, status='replace')
     open(unit=dump_unit, file=mdr%dump_file, status='replace')
     open(unit=stat_unit, file=mdr%stat_file, status='replace')
-    if (mdr%iprint == 0) open(debug_unit, file='baro_state.out', &
-                              status='replace')
-    call mdr%p_t%write_xsf(traj_unit, .true., 1, (s_end/mdr%dump_freq)+1)
-    call mdr%stat_dump(stat_unit, s)
-    if (mdr%dump .eqv. .true.) then
-      if (mdr%dump_freq == 0) call mdr%md_dump(dump_unit, s)
+    if (mdr%iprint == 0) then
+      open(debug_unit_1, file='baro_state', status='replace')
+      open(debug_unit_2, file='thermo_state', status='replace')
+    end if
+
+    if (mdr%restart .eqv. .false.) then
+      ! Only dump the initial configuration before the first step
+      s = 0
+      call mdr%p_t%write_xsf(traj_unit, .true., 1, (s_end/mdr%dump_freq)+1)
+      call mdr%stat_dump(stat_unit, s)
+      if (mdr%dump .eqv. .true.) then
+        if (mdr%dump_freq == 0) call mdr%md_dump(dump_unit, s)
+      end if
+    else
+      mdr%step = mdr%step + 1
     end if
 
     ! Main MD loop
@@ -637,6 +842,7 @@ contains
       else
         call mdr%vVerlet_r(mdr%dt, one) ! velocity Verlet r update
       end if
+      ! call mdr%p_t%cell_cart2frac
 
       ! dump configuration to .xsf file
       if (d .eqv. .true.) then
@@ -664,29 +870,30 @@ contains
           call mdr%iso_baro%berendsen_baro_propagate(mdr%p_t%rcart, mdr%p_t%h)
         end if
         call mdr%get_pv
+        mdr%iso_baro%h = mdr%p_t%h
+        mdr%iso_baro%V = mdr%V
+        mdr%iso_baro%stress = mdr%stress
       case('npt')
         if (mdr%baro_type == 'mttk') then
           call mdr%propagate_npt_mttk(mdr%dt)
         else if (mdr%baro_type == 'iso-mttk') then
           call mdr%propagate_iso_npt_mttk(mdr%dt)
-          call mdr%get_pv
         else if (mdr%baro_type == 'berendsen') then
           ! Propagate the Berendsen barostat after the velocity update so that
           ! rescaling does not affect velocities
-          mdr%iso_baro%h = mdr%p_t%h
-          mdr%iso_baro%V = mdr%V
-          mdr%iso_baro%stress = mdr%stress
           call mdr%iso_baro%berendsen_baro_propagate(mdr%p_t%rcart, mdr%p_t%h)
           call mdr%th%berendsen_thermo_propagate(mdr%v_t)
-          call mdr%get_pv
         end if
+        call mdr%get_pv
+        mdr%iso_baro%h = mdr%p_t%h
+        mdr%iso_baro%V = mdr%V
+        mdr%iso_baro%stress = mdr%stress
         if (mdr%thermo_type == 'nhc') call mdr%th%get_nhc_ke
       end select
 
       ! Update arrays and thermodyanmics quantities
       call mdr%update_v(mdr%remove_com_v)
       call mdr%get_kinetic_energy
-      mdr%e_nve = mdr%ke + mdr%pe
       if (mdr%ensemble(3:3) == 't') mdr%th%ke_system = mdr%ke
       if (mdr%ensemble(2:2) == 'p') call mdr%get_pv
 
@@ -695,6 +902,10 @@ contains
       call mdr%get_temperature
       call mdr%get_stress
 
+      ! Write the checkpoint
+      if (mod(s,mdr%cp_freq) == 0) call mdr%write_checkpoint(cp_unit, s)
+
+      ! Dump the statistics
       call mdr%stat_dump(stat_unit, s)
       if (mdr%dump .eqv. .true.) then
         if (d .eqv. .true.) then
@@ -705,22 +916,30 @@ contains
         end if
       end if
       if (mdr%iprint == 0) then
+        if (mdr%ensemble(3:3) == 't') then
+          if (mdr%thermo_type == 'nhc') then
+            call mdr%th%dump_thermo_state(s, debug_unit_2)
+          end if
+        end if
         if (mdr%ensemble(2:2) == 'p') then
           if (mdr%baro_type == 'mttk') then
-            call mdr%baro%dump_baro_state(s, debug_unit)
+            call mdr%baro%dump_baro_state(s, debug_unit_1)
           else if (mdr%baro_type == 'iso-mttk') then
             mdr%iso_baro%stress = mdr%stress
-            call mdr%iso_baro%dump_baro_state_iso(s, debug_unit)
+            call mdr%iso_baro%dump_baro_state_iso(s, debug_unit_1)
           else if (mdr%baro_type == 'berendsen') then
-            call mdr%iso_baro%dump_baro_state_iso(s, debug_unit)
+            call mdr%iso_baro%dump_baro_state_iso(s, debug_unit_1)
           end if
         end if
       end if
-    end do
+    end do ! Main MD loop
     close(traj_unit)
     close(dump_unit)
     close(stat_unit)
-    if (mdr%iprint == 0) close(debug_unit)
+    if (mdr%iprint == 0) then
+      close(debug_unit_1)
+      close(debug_unit_2)
+    end if
 
   end subroutine md_run
 
@@ -739,7 +958,11 @@ contains
     real(double)    :: G_nhc_1 ! force on first NHC thermostat
     real(double), dimension(3,3) :: P_int
 
-    ! Get the kinetic energy
+    if (mdr%iprint == 0) write(*,'(4x,a)') "MTTK: Scaling velocities for MTTK barostat"
+
+    call mdr%get_kinetic_energy
+    call mdr%get_stress
+    call mdr%baro%get_box_ke
     ! Update forces on thermostat and barostat
     call mdr%baro%update_G_h(mdr%ke, mdr%virial_ke, mdr%stress, mdr%V, &
                              mdr%T_ext, mdr%th%Q(1), G_nhc_1)
@@ -925,8 +1148,9 @@ contains
     class(type_md), intent(inout)             :: mdr
 
     ! For the NVE ensemble, the conserved quantity is just the total energy
+    mdr%e_nve = mdr%ke + mdr%pe
     mdr%h_prime = zero
-    mdr%h_prime = mdr%h_prime + mdr%ke + mdr%pe
+    mdr%h_prime = mdr%h_prime + mdr%e_nve
 
     write(*,'("  Total energy     = ",e16.8)') mdr%e_nve
     ! For NVT (NHC), add the NHC energy
@@ -1090,5 +1314,107 @@ contains
     end select
 
   end subroutine stat_dump
+
+  ! create a checkpoint for restarting
+  subroutine write_checkpoint(mdr, iunit, step)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+    integer, intent(in)             :: iunit
+    integer, intent(in)             :: step
+
+    ! local variables
+    integer                         :: i
+
+    open(iunit, file=mdr%cp_file, status='replace')
+    write(iunit,*) mdr%nrestart + 1
+    write(iunit,*) step
+    do i=1,3
+      write(iunit,*) mdr%p_t%h(i,:)
+    end do
+    do i=1,mdr%nat
+      write(iunit,*) mdr%species(i), mdr%p_t%rcart(i,:)
+    end do
+    do i=1,mdr%nat
+      write(iunit,*) mdr%v_t(i,:)
+    end do
+    do i=1,mdr%nat
+      write(iunit,*) mdr%f(i,:)
+    end do
+    if (mdr%thermo_type == 'nhc') then
+      write(iunit,*) mdr%n_nhc      
+      write(iunit,*) mdr%th%eta
+      write(iunit,*) mdr%th%v_eta
+      write(iunit,*) mdr%th%G_nhc
+    end if
+    if (mdr%baro_type == 'iso-mttk') then
+      write(iunit,*) mdr%iso_baro%eps
+      write(iunit,*) mdr%iso_baro%v_eps
+      write(iunit,*) mdr%iso_baro%G_eps
+    end if
+    if (mdr%baro_type == 'mttk') then
+      do i=1,3
+        write(iunit,*) mdr%baro%h(i,:)
+      end do
+      do i=1,3
+        write(iunit,*) mdr%baro%v_h(i,:)
+      end do
+      do i=1,3
+        write(iunit,*) mdr%baro%G_h(i,:)
+      end do
+    end if
+    close(iunit)
+
+  end subroutine write_checkpoint
+
+  ! read a checkpoint file
+  subroutine read_checkpoint(mdr, iunit)
+
+    ! passed variables
+    class(type_md), intent(inout)   :: mdr
+    integer, intent(in)             :: iunit
+
+    ! local variables
+    integer                         :: i
+
+    open(iunit, file=mdr%cp_file, status='old')
+    read(iunit,*) mdr%nrestart
+    read(iunit,*) mdr%step
+    do i=1,3
+      read(iunit,*) mdr%p_t%h(i,:)
+    end do
+    do i=1,mdr%nat
+      read(iunit,*) mdr%species(i), mdr%p_t%rcart(i,:)
+    end do
+    do i=1,mdr%nat
+      read(iunit,*) mdr%v_t(i,:)
+    end do
+    do i=1,mdr%nat
+      read(iunit,*) mdr%f(i,:)
+    end do
+    if (mdr%thermo_type == 'nhc') then
+      read(iunit,*) mdr%n_nhc      
+      read(iunit,*) mdr%th%eta
+      read(iunit,*) mdr%th%v_eta
+      read(iunit,*) mdr%th%G_nhc
+    end if
+    if (mdr%baro_type == 'iso-mttk') then
+      read(iunit,*) mdr%iso_baro%eps
+      read(iunit,*) mdr%iso_baro%v_eps
+      read(iunit,*) mdr%iso_baro%G_eps
+    else if (mdr%baro_type == 'mttk') then
+      do i=1,3
+        read(iunit,*) mdr%baro%h(i,:)
+      end do
+      do i=1,3
+        read(iunit,*) mdr%baro%v_h(i,:)
+      end do
+      do i=1,3
+        read(iunit,*) mdr%baro%G_h(i,:)
+      end do
+    end if
+    close(iunit)
+    
+  end subroutine read_checkpoint
 
 end module md_module

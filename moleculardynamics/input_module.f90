@@ -14,14 +14,17 @@ module input_module
     character(40)   :: statfile = 'stat.out'
 
     ! General simulation parameters
+    logical         :: restart = .false.    ! restart from checkpoint
     character(3)    :: ensemble = 'nve'
     real(double)    :: dt                   ! time step
     integer         :: natoms
     integer         :: nsteps
     integer         :: dump_freq            ! time steps between dumps
+    integer         :: cp_freq = 100        ! time steps between checkpoint
     logical         :: comv = .true.        ! remove centre of mass velocity
     logical         :: cart = .false.       ! input structure in Cartesian coord
     character(40)   :: v_distr = 'uniform'  ! Initial velocity distribution
+    character(40)   :: pbc_method = 'mic'
 
     ! Pair potential paramters
     logical         :: shift = .false.
@@ -113,10 +116,10 @@ subroutine read_input(inp, filename)
       write(*,'("shift               ",l20)') inp%shift
     case ('thermo_type')
       read(param,*) inp%thermo_type
-      write(*,'("thermo_type         ",l20)') inp%thermo_type
+      write(*,'("thermo_type         ",a20)') inp%thermo_type
     case ('T_ext')
       read(param,*) inp%T_ext
-      write(*,'("T_ext               ",l20)') inp%T_ext
+      write(*,'("T_ext               ",f20.8)') inp%T_ext
     case ('tau_T')
       read(param,*) inp%tau_T
       write(*,'("tau_T               ",f20.8)') inp%tau_T
@@ -131,7 +134,7 @@ subroutine read_input(inp, filename)
     case ('nhc_mass')
       if (inp%n_nhc > 0) then
         read(param,*) inp%nhc_mass
-        write(*,'("nhc_mass            ",f20.6)') inp%nhc_mass
+        write(*,'("nhc_mass          ",f20.6)') inp%nhc_mass
       end if
     case ('baro_type')
       read(param,*) inp%baro_type
@@ -141,14 +144,23 @@ subroutine read_input(inp, filename)
       write(*,'("P_ext               ",f20.8)') inp%P_ext
     case ('box_mass')
       read(param,*) inp%box_mass
-      write(*,'("box_mass            "f20.8)') inp%box_mass
+      write(*,'("box_mass            ",f20.8)') inp%box_mass
     case ('tau_P')
       read(param,*) inp%tau_P
-      write(*,'("tau_P               "f20.8)') inp%box_mass
+      write(*,'("tau_P               ",f20.8)') inp%box_mass
+    case ('restart')
+      read(param,*) inp%restart
+      write(*,'("restart             ",l20)') inp%restart
+    case('checkpoint')
+      read(param,*) inp%cp_freq
+      write(*,'("checkpoint          ",i20)') inp%cp_freq
+    case ('pbc_method')
+      read(param,*) inp%pbc_method
+      write(*,'("pbc_method          ",a20)') inp%pbc_method
     end select
-
   end do
   write(*,*)
+
 end subroutine read_input
 
 end module input_module
