@@ -2,7 +2,7 @@ module barostat_module
 
 use datatypes
 use constants
-use maths, only: exp_sinhx_x
+use maths, only: poly_sinhx_x
 
 implicit none
 
@@ -145,7 +145,7 @@ contains
 
     do i=1,3
       exp_eig = exp(dtfac*dt*baro%lambda(i))
-      sinhx_x = exp_sinhx_x(dtfac*dt*baro%lambda(i))
+      sinhx_x = poly_sinhx_x(dtfac*dt*baro%lambda(i))
       rscale(i) = exp_eig**2
       vscale(i) = exp_eig*dt*sinhx_x
     end do

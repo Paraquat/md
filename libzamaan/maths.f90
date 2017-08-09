@@ -17,10 +17,10 @@ real(double), parameter  :: sh8 = sh6/seventytwo
 contains
 
 ! Taylor expansion of sinh(x)/x
-function exp_sinhx_x(x) result(f)
+function poly_sinhx_x(x) result(f)
   real(double)  :: x, f
   x = x**2
   f = (((sh8*x + sh6)*x + sh4)*x + sh2)*x + one
-end function exp_sinhx_x
+end function poly_sinhx_x
 
 end module maths

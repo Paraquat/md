@@ -2,7 +2,7 @@ module isotropic_barostat_module
 
 use datatypes
 use constants
-use maths, only: exp_sinhx_x
+use maths, only: poly_sinhx_x
 
 implicit none
 
@@ -245,7 +245,7 @@ contains
 
     if (baro%iprint == 0) write(*,'(6x,a)') "MTTK: propagating particle positions"
     exp_v_eps = exp(dt*dtfac*baro%v_eps)
-    sinhx_x = exp_sinhx_x(dtfac*dt*baro%v_eps)
+    sinhx_x = poly_sinhx_x(dtfac*dt*baro%v_eps)
     rscale = exp_v_eps**2
     vscale = exp_v_eps*sinhx_x*dt
     r = r*rscale + v*vscale

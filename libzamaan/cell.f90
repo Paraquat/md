@@ -20,7 +20,7 @@ type type_cell
   real(double), allocatable, dimension(:,:) :: r, rcart, dt, rghost
   character(2), allocatable, dimension(:)   :: spec, species, species_ghost
   integer, allocatable, dimension(:)        :: spec_count, spec_int, &
-                                               spec_ghost_int
+                                               spec_ghost_int, ghost_label
   real(double), allocatable, dimension(:)   :: mass
   real(double), dimension(3,3)              :: h, h_inv
   real(double), dimension(6)                :: param
@@ -880,13 +880,14 @@ subroutine init_ghost(p, depth)
   p%nghost = (2*depth + 1)**3
   p%nat_ghost = p%nghost*p%nat
   allocate(p%rghost(p%nat_ghost,3), p%species_ghost(p%nat_ghost), &
-           p%spec_ghost_int(p%nat_ghost))
+           p%spec_ghost_int(p%nat_ghost), p%ghost_label(p%nat_ghost))
 
   n = 1
   do i=1,p%nghost
     do j=1,p%nat
       p%species_ghost(n) = p%species(j)
       p%spec_ghost_int(n) = p%spec_int(j)
+      p%ghost_label(n) = j
       n = n + 1
     end do
   end do
@@ -903,6 +904,8 @@ subroutine update_ghost_cells(p)
   integer                           :: a, i, j, k, n
   real(double), dimension(3)        :: rfrac, trans
 
+  call p%invert_lat
+  call p%cell_cart2frac
   n = 1
   do i=-p%depth,p%depth
     do j=-p%depth,p%depth

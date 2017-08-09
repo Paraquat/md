@@ -124,7 +124,7 @@ contains
       call mdr%p_t%init_ghost(mdr%ghost_depth)
     end if
 
-    call mdr%mdl%init_model(mdr%nat, mdr%nspec)
+    ! call mdr%mdl%init_model(mdr%nat, mdr%nspec)
     mdr%mdl%r = mdr%p_t%r
     mdr%mdl%r0 = mdr%p_t%r
     mdr%mdl%rcart = mdr%p_t%rcart
@@ -540,7 +540,7 @@ contains
         r_ij_cart = mdr%p_t%rghost(jat,:) - mdr%p_t%rcart(iat,:)
         mod_r_ij = modulus(r_ij_cart)
         if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
-          if (mod_r_ij > small) then
+          if (mdr%p_t%ghost_label(jat) /= iat) then
             call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
                                             mod_f, pe)
             f_ij = mod_f*norm(r_ij_cart)
@@ -579,7 +579,6 @@ contains
     mdr%virial_tensor = zero
 
     if (mdr%ensemble(2:2) == 'p') call mdr%p_t%invert_lat
-    call mdr%p_t%cell_cart2frac
 
     do iat=1,mdr%nat
       do jat=iat+1,mdr%nat
@@ -755,7 +754,7 @@ contains
 
     ! local variables
     integer       :: s, traj_unit, dump_unit, stat_unit, cp_unit, &
-                     debug_unit_1, debug_unit_2
+                     debug_unit_1, debug_unit_2, i
     logical       :: d
 
     write(*,'(a)') "Starting main MD loop"
@@ -788,6 +787,7 @@ contains
 
     ! Main MD loop
     do s=s_start,s_end
+      mdr%step = s
       d = .false.
       if (mod(s,mdr%dump_freq) == 0) d = .true.
       write(*,*)
@@ -842,13 +842,18 @@ contains
       else
         call mdr%vVerlet_r(mdr%dt, one) ! velocity Verlet r update
       end if
-      ! call mdr%p_t%cell_cart2frac
 
       ! dump configuration to .xsf file
       if (d .eqv. .true.) then
         call mdr%p_t%write_xsf(traj_unit, .true., s+1, s_end+1)
       end if
       call mdr%get_force_and_energy
+      if (mdr%iprint == 0) then
+        write(*,'(2x,a)') "Forces on atoms:"
+        do i=1,mdr%nat
+          write(*,'(4x,2i6,3e16.8)') i, mdr%species(i), mdr%f(i,:)
+        end do
+      end if
 
       ! Velocity Verlet dt/2 step
       call mdr%vVerlet_v(mdr%dt, half)
