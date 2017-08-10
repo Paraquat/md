@@ -313,21 +313,21 @@ ax1.plot((time[0],time[-1]), (mean_stress[2,2], mean_stress[2,2]), 'b-',
 ax2.plot(time, stress[:,0,1], 'r-', label='xy')
 ax2.plot(time, stress[:,1,0], 'r--', label='yx')
 ax2.plot(time, stress[:,1,2], 'g-', label='yz')
-ax2.plot(time, stress[:,2,1], 'g--', label='zy')
-ax2.plot(time, stress[:,0,2], 'b-', label='xz')
-ax2.plot(time, stress[:,2,0], 'b--', label='zx')
+# ax2.plot(time, stress[:,2,1], 'g--', label='zy')
+# ax2.plot(time, stress[:,0,2], 'b-', label='xz')
+# ax2.plot(time, stress[:,2,0], 'b--', label='zx')
 ax2.plot((time[0],time[-1]), (mean_stress[0,1], mean_stress[0,1]), 'r-',
         label=r'$\langle S_{{xy}} \rangle$ = {0:<10.4f}'.format(mean_stress[0,1]))
-ax2.plot((time[0],time[-1]), (mean_stress[1,0], mean_stress[1,0]), 'r--',
-        label=r'$\langle S_{{yx}} \rangle$ = {0:<10.4f}'.format(mean_stress[1,0]))
+# ax2.plot((time[0],time[-1]), (mean_stress[1,0], mean_stress[1,0]), 'r--',
+        # label=r'$\langle S_{{yx}} \rangle$ = {0:<10.4f}'.format(mean_stress[1,0]))
 ax2.plot((time[0],time[-1]), (mean_stress[0,2], mean_stress[0,2]), 'g-',
         label=r'$\langle S_{{xz}} \rangle$ = {0:<10.4f}'.format(mean_stress[0,2]))
-ax2.plot((time[0],time[-1]), (mean_stress[2,0], mean_stress[2,0]), 'g--',
-        label=r'$\langle S_{{zx}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,0]))
+# ax2.plot((time[0],time[-1]), (mean_stress[2,0], mean_stress[2,0]), 'g--',
+        # label=r'$\langle S_{{zx}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,0]))
 ax2.plot((time[0],time[-1]), (mean_stress[1,2], mean_stress[1,2]), 'b-',
         label=r'$\langle S_{{yz}} \rangle$ = {0:<10.4f}'.format(mean_stress[1,2]))
-ax2.plot((time[0],time[-1]), (mean_stress[2,1], mean_stress[2,1]), 'b--',
-        label=r'$\langle S_{{zy}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,1]))
+# ax2.plot((time[0],time[-1]), (mean_stress[2,1], mean_stress[2,1]), 'b--',
+        # label=r'$\langle S_{{zy}} \rangle$ = {0:<10.4f}'.format(mean_stress[2,1]))
 ax1.legend(bbox_to_anchor=(1.05,1), loc=2, borderaxespad=0.)
 ax2.legend(bbox_to_anchor=(1.05,1), loc=2, borderaxespad=0.)
 fig2.subplots_adjust(hspace=0)

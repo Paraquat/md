@@ -824,12 +824,15 @@ contains
       if (mdr%ensemble(2:2) == 'p') then ! constant pressure
         select case(mdr%baro_type)
         case('mttk')
-          call mdr%baro%vVerlet_r_h_npt(mdr%dt, mdr%p_t%h, mdr%v_t, &
-                                        mdr%p_t%rcart, mdr%th%v_eta(1))
+          call mdr%baro%diag_vbox(mdr%th%v_eta(1))
+          call mdr%baro%get_Ie(mdr%dt, one)
+          call mdr%baro%get_Is(mdr%dt, half)
+          call mdr%baro%propagate_r_sys(mdr%dt, one, mdr%p_t%r, mdr%v_t)
+          call mdr%baro%propagate_h(mdr%dt, one, mdr%p_t%h)
           mdr%p_t%V = mdr%p_t%volume()
           mdr%V = mdr%p_t%V
         case('iso-mttk')
-          call mdr%iso_baro%propagate_r_sys(mdr%dt, half, mdr%v_t, &
+          call mdr%iso_baro%propagate_r_sys_iso(mdr%dt, half, mdr%v_t, &
                                             mdr%p_t%rcart)
           call mdr%iso_baro%propagate_eps_1(mdr%dt, one)
           call mdr%iso_baro%propagate_box(mdr%p_t%h, mdr%p_t%V)
@@ -969,9 +972,7 @@ contains
     call mdr%get_stress
     call mdr%baro%get_box_ke
     ! Update forces on thermostat and barostat
-    call mdr%baro%update_G_h(mdr%ke, mdr%virial_ke, mdr%stress, mdr%V, &
-                             mdr%T_ext, mdr%th%Q(1), G_nhc_1)
-    mdr%th%G_nhc(1) = G_nhc_1
+    call mdr%baro%update_G_h(mdr%ke, mdr%stress, mdr%V)
     do i=1,mdr%th%mts_nhc ! MTS loop
       do j=1,mdr%th%n_ys ! Yoshida-Suzuki loop
         ! Update thermostat velocities
@@ -995,13 +996,14 @@ contains
           call mdr%th%propagate_eta_k(k, dt, half)
         end do
         ! Update Particle velocities
-        call mdr%baro%propagate_v_sys(dt, half, mdr%th%v_eta(1), mdr%v_t)
+        call mdr%baro%diag_vbox(mdr%th%v_eta(1))
+        call mdr%baro%get_Ie(mdr%dt, one)
+        call mdr%baro%propagate_v_sys(mdr%dt, half, mdr%v_t)
         ! Get total ke
         call mdr%get_kinetic_energy
         ! Update the box forces
         P_int = mdr%virial_tensor/mdr%V
-        call mdr%baro%update_G_h(mdr%ke, mdr%virial_ke, P_int, mdr%V, &
-                                 mdr%T_ext, mdr%th%Q(1), G_nhc_1)
+        call mdr%baro%update_G_h(mdr%ke, mdr%stress, mdr%V)
         ! Update the box velocities
         call mdr%baro%propagate_v_h_2(dt, eighth, mdr%th%v_eta(1))
         call mdr%baro%propagate_v_h_1(dt, quarter)

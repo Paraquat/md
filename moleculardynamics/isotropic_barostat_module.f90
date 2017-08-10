@@ -49,7 +49,7 @@ contains
   procedure :: propagate_v_eps_1
   procedure :: propagate_v_eps_2
   procedure :: propagate_v_sys_iso
-  procedure :: propagate_r_sys
+  procedure :: propagate_r_sys_iso
   procedure :: propagate_box
   procedure :: dump_baro_state_iso
 
@@ -229,7 +229,7 @@ contains
   ! coupling box and particle positions. This is a little complicated and
   ! contains a polynomial expansion of sinh(x)/x, so I will do it in one
   ! subroutine for now, as in the MTTK paper.
-  subroutine propagate_r_sys(baro, dt, dtfac, v, r)
+  subroutine propagate_r_sys_iso(baro, dt, dtfac, v, r)
 
     ! Passed variables
     class(type_iso_barostat), intent(inout)     :: baro
@@ -250,7 +250,7 @@ contains
     vscale = exp_v_eps*sinhx_x*dt
     r = r*rscale + v*vscale
 
-  end subroutine propagate_r_sys
+  end subroutine propagate_r_sys_iso
 
   ! Update the lattice vectors
   subroutine propagate_box(baro, h, V)
