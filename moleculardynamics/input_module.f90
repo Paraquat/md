@@ -20,6 +20,7 @@ module input_module
     integer         :: natoms
     integer         :: nsteps
     integer         :: dump_freq            ! time steps between dumps
+    integer         :: iprint = 0           ! print level
     integer         :: cp_freq = 100        ! time steps between checkpoint
     logical         :: comv = .true.        ! remove centre of mass velocity
     logical         :: cart = .false.       ! input structure in Cartesian coord
@@ -34,16 +35,20 @@ module input_module
     real(double)    :: T_ext                ! external temperature
     real(double)    :: tau_T = one          ! thermostat time period
     integer         :: n_nhc = 5            ! length of Nose-Hoover chain
+    integer         :: n_mts = 1            ! multiple time step order
+    integer         :: n_ys = 1             ! Yoshida-Suzuki order
     real(double), dimension(:), allocatable :: nhc_mass
+    real(double), dimension(:), allocatable :: cell_nhc_mass
 
     ! Barostat paramters
     character(40)   :: baro_type
     real(double)    :: P_ext                ! external pressure
     real(double)    :: box_mass = one       ! box mass for extended-Lagrangian
     real(double)    :: tau_P = one          ! barostat time period
+    real(double)    :: bulkmod = 100.0_double ! bulk modulus estimate
 
   contains
-    procedure :: read_input
+    procedure, public :: read_input
 
   end type md_input
 
@@ -127,7 +132,9 @@ subroutine read_input(inp, filename)
       read(param,*) inp%n_nhc
       write(*,'("n_nhc               ",i20)') inp%n_nhc
       allocate(inp%nhc_mass(inp%n_nhc))
+      allocate(inp%cell_nhc_mass(inp%n_nhc))
       inp%nhc_mass = one
+      inp%cell_nhc_mass = one
     case ('v_distr')
       read(param,*) inp%v_distr
       write(*,'("v_distr             ",a20)') inp%v_distr
@@ -135,6 +142,11 @@ subroutine read_input(inp, filename)
       if (inp%n_nhc > 0) then
         read(param,*) inp%nhc_mass
         write(*,'("nhc_mass          ",f20.6)') inp%nhc_mass
+      end if
+    case ('cell_nhc_mass')
+      if (inp%n_nhc > 0) then
+        read(param,*) inp%cell_nhc_mass
+        write(*,'("cell_nhc_mass      ",f20.6)') inp%cell_nhc_mass
       end if
     case ('baro_type')
       read(param,*) inp%baro_type
@@ -147,7 +159,7 @@ subroutine read_input(inp, filename)
       write(*,'("box_mass            ",f20.8)') inp%box_mass
     case ('tau_P')
       read(param,*) inp%tau_P
-      write(*,'("tau_P               ",f20.8)') inp%box_mass
+      write(*,'("tau_P               ",f20.8)') inp%tau_P
     case ('restart')
       read(param,*) inp%restart
       write(*,'("restart             ",l20)') inp%restart
@@ -157,6 +169,12 @@ subroutine read_input(inp, filename)
     case ('pbc_method')
       read(param,*) inp%pbc_method
       write(*,'("pbc_method          ",a20)') inp%pbc_method
+    case ('bulkmod_est')
+      read(param,*) inp%bulkmod
+      write(*,'("bulkmod_est         ",f20.6)') inp%bulkmod
+    case ('iprint')
+      read(param,*) inp%iprint
+      write(*,'("iprint              ",i20)') inp%iprint
     end select
   end do
   write(*,*)

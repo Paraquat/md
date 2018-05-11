@@ -4,14 +4,11 @@ PROG = md
 
 #FCFLAGS = -fbackslash
 LDFLAGS = $(LPATH) $(IPATH) -lzamaan -llapack -lblas
-SRCS = input_module.f90 thermostat_module.f90 isotropic_barostat_module.f90 barostat_module.f90 md_model.f90 md_module.f90 cmdline.f90 main.f90
-OBJS = input_module.o thermostat_module.o isotropic_barostat_module.o barostat_module.o md_model.o md_module.o cmdline.o main.o
-DEBUG = -O0 -g -fbounds-check
+SRCS = input_module.f90 md_control.f90 md_model.f90 md_module.f90 cmdline.f90 main.f90
+OBJS = input_module.o md_control.o md_model.o md_module.o cmdline.o main.o
 
 .SUFFIXES: $(SUFFIXES) .f90
 .PHONY: clean
-
-FC = gfortran $(DEBUG) $(FCFLAGS)
 
 all: $(PROG)
 
@@ -27,10 +24,9 @@ $(PROG): $(OBJS)
 %.o: %.mod
 
 input_module.o: input_module.f90
-thermostat_module.o: thermostat_module.f90 ../libzamaan/libzamaan.a
+md_control.o: md_control.f90 ../libzamaan/libzamaan.a
 isotropic_barostat_module.o: isotropic_barostat_module.f90 ../libzamaan/libzamaan.a
-barostat_module.o: barostat_module.f90 ../libzamaan/libzamaan.a
 md_model.o: md_model.f90 ../libzamaan/libzamaan.a
-md_module.o: md_module.f90 md_model.f90 thermostat_module.f90 barostat_module.f90 ../libzamaan/libzamaan.a
+md_module.o: md_module.f90 md_model.f90 md_control.f90
 cmdline.o: cmdline.f90
 main.o: cmdline.o md_module.f90 main.f90 ../libzamaan/libzamaan.a
