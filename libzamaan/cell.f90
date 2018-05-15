@@ -197,6 +197,7 @@ function volume(p) result(vol)
 
   cp = cross_product(p%h(2,:), p%h(3,:))
   vol = dot_product(p%h(1,:), cp)
+  p%V = vol
 end function volume
 
 function frac2cart(p, v) result (r)

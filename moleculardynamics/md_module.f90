@@ -22,7 +22,7 @@ type type_md
   integer         :: nsteps, step, nspec, nat, ndof, ghost_depth
   integer         :: iprint, dump_freq, nrestart, cp_freq
   integer         :: n_nhc, n_mts, n_ys
-  logical         :: shift, remove_com_v, dump, restart
+  logical         :: shift, remove_com_v, dump, restart, append
   character(40)   :: position_file, dump_file, stat_file, cp_file, &
                      thermo_type, baro_type, init_distr, units, pbc_method
   integer, allocatable, dimension(:)          :: species, species_ghost
@@ -32,9 +32,8 @@ type type_md
   real(double), dimension(3,3)                :: stress, kinetic_stress, &
                                                  static_stress
   real(double), dimension(3)                  :: sumv
-  real(double)   :: pe, ke, T_int, T_ext, dt, k_B_md, virial, P_int, P_ext, &
-                    V, e_nhc, ke_box, pv, e_npt, e_nvt, e_nve, h_prime, &
-                    enthalpy, tau_T, tau_P, bulkmod_est
+  real(double)   :: T_ext, dt, k_B_md, virial, P_ext, &
+                    V, PV, h_prime, tau_T, tau_P, bulkmod_est
 
   contains
     procedure :: init_md
@@ -54,7 +53,6 @@ type type_md
     procedure :: fire
     procedure :: dump_atom_arr
     procedure :: md_dump
-    procedure :: stat_dump
     procedure :: write_checkpoint
     procedure :: read_checkpoint
 end type type_md
@@ -77,6 +75,10 @@ contains
                                        posfile_prefix, suffix
 
     write(*,'(a)') "Initialising MD"
+    mdr%dump_file = "Frames"
+    mdr%stat_file = "Stats"
+    mdr%position_file = "trajectory.xsf"
+
     mdr%nrestart = 0
     mdr%restart = inp%restart
     mdr%ensemble = inp%ensemble
@@ -113,14 +115,12 @@ contains
     end if
     mdr%V = mdr%p_t%volume()
 
-    ! call mdr%mdl%init_model(mdr%nat, mdr%nspec)
-    mdr%mdl%r = mdr%p_t%r
-    mdr%mdl%r0 = mdr%p_t%r
-    mdr%mdl%rcart = mdr%p_t%rcart
-    mdr%mdl%rcart0 = mdr%p_t%rcart
-    mdr%mdl%h = mdr%p_t%h
-    mdr%mdl%h0 = mdr%p_t%h
-    ! mdr%mdl%species = mdr%p_t%species
+    ! degrees of freedom
+    mdr%ndof = 3*mdr%nat
+    if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
+
+    call mdr%mdl%init_model(inp, mdr%p_t, mdr%v_t, mdr%f, mdr%th, &
+                            mdr%baro, mdr%ndof)
 
     mdr%dump = .true.
     mdr%dump_freq = 1
@@ -146,16 +146,13 @@ contains
       mdr%mass(i) = mdr%p_t%mass(mdr%p_t%spec_int(i))
     end do
 
-    ! ensemble specifics
-    mdr%ndof = 3*mdr%nat
-    if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
     ! constant temperature
     if (mdr%ensemble(3:3) == 't') then
-      call mdr%th%init_thermostat(inp, mdr%ndof, mdr%ke)
+      call mdr%th%init_thermostat(inp, mdr%ndof, mdr%mdl%E_k)
     end if
     ! constant pressure
     if (mdr%ensemble(2:2) == 'p') then
-      call mdr%baro%init_barostat(inp, mdr%ndof, mdr%ke, init_cell)
+      call mdr%baro%init_barostat(inp, mdr%ndof, mdr%mdl%E_k, init_cell)
     end if
 
     write(*,'(a)') "Simulation parameters:"
@@ -281,32 +278,21 @@ contains
       call mdr%get_kinetic_energy
       mdr%V = mdr%p_t%volume()
       if (mdr%thermo_type == 'nhc')  then
-        mdr%th%ke_atoms = mdr%ke
+        mdr%th%ke_atoms = mdr%mdl%E_k
         call mdr%th%get_nhc_ke
-        mdr%e_nhc = mdr%th%e_nhc
+        mdr%mdl%E_nhc = mdr%th%e_nhc
       end if
       if (mdr%baro_type == 'mttk' .or. mdr%baro_type == 'iso-mttk' .or. &
           mdr%baro_type == 'ortho-mttk') then
         call mdr%baro%get_box_ke
-        mdr%ke_box = mdr%baro%ke_box
+        mdr%mdl%E_box = mdr%baro%ke_box
       end if
       call mdr%get_cons_qty
-      call mdr%th%get_temperature
-      mdr%T_int = mdr%th%T_int
       call mdr%baro%update_stress(mdr%static_stress, mdr%kinetic_stress)
       call mdr%baro%get_stress_and_pressure
-      mdr%P_int = mdr%baro%P_int
+      call mdr%th%get_temperature(mdr%mdl%E_k)
       call mdr%get_pv
     end if
-
-    ! Change output file names based on restart number
-    dumpfile_prefix = "dump"
-    statfile_prefix = "stat"
-    posfile_prefix = "traj"
-    write(suffix,'(a,i3.3)') ".", mdr%nrestart
-    mdr%dump_file = trim(dumpfile_prefix) // trim(suffix)
-    mdr%stat_file = trim(statfile_prefix) // trim(suffix)
-    mdr%position_file = trim(posfile_prefix) // trim(suffix) // ".xsf"
     write(*,*)
 
   end subroutine init_md
@@ -370,17 +356,13 @@ contains
     call mdr%update_v(mdr%remove_com_v)
     write(*,'(a)') "Before rescaling:"
     call mdr%get_kinetic_energy
-    th%ke_atoms = mdr%ke
-    call th%get_temperature
-    mdr%T_int = th%T_int
-    sfac = sqrt(mdr%T_ext/mdr%T_int)
+    call th%get_temperature(mdr%mdl%E_k)
+    sfac = sqrt(mdr%T_ext/mdr%th%T_int)
     write(*,*)
     mdr%v_t = sfac*mdr%v_t ! Scale velocities according to T_ext
     write(*,'(a)') "After rescaling:"
     call mdr%get_kinetic_energy
-    th%ke_atoms = mdr%ke
-    call th%get_temperature
-    mdr%T_int = th%T_int
+    call th%get_temperature(mdr%mdl%E_k)
   end subroutine init_velocities
 
   ! Reomve centre of mass velocity, compute velocity and sum of velocities
@@ -415,6 +397,7 @@ contains
     ! passed variables
     class(type_md), intent(inout)   :: mdr
 
+    if (mdr%iprint > 0) write(*,'(2x,a)') "get_force_and_energy"
     select case (mdr%pbc_method)
     case ('mic')
       call mdr%get_force_and_energy_mic
@@ -436,7 +419,7 @@ contains
     real(double), dimension(3)      :: r_ij_cart, f_ij
     real(double)                    :: mod_r_ij, mod_f, pe
 
-    mdr%pe = zero
+    mdr%mdl%E_p = zero
     mdr%f = zero
     mdr%virial = zero
     mdr%static_stress = zero
@@ -453,7 +436,7 @@ contains
           f_ij = mod_f*norm(r_ij_cart)
           mdr%f(iat,:) = mdr%f(iat,:) + f_ij
           mdr%f(jat,:) = mdr%f(jat,:) - f_ij
-          mdr%pe = mdr%pe + pe
+          mdr%mdl%E_p = mdr%mdl%E_p + pe
           ! compute virial
           mdr%virial = mdr%virial + dot_product(f_ij, r_ij_cart)
           mdr%static_stress = mdr%static_stress + &
@@ -461,10 +444,10 @@ contains
         end if
       end do
     end do
-    ! mdr%pe = mdr%pe*half
+    ! mdr%mdl%E_p = mdr%mdl%E_p*half
     mdr%virial = third*mdr%virial/mdr%V ! The configurational part of the &
                                         ! virial, used in iso-mttk barostat
-    write(*,'("  Potential energy = ",e16.8)') mdr%pe
+    write(*,'("  Potential energy = ",e16.8)') mdr%mdl%E_p
 
   end subroutine get_force_and_energy_mic
 
@@ -479,7 +462,7 @@ contains
     real(double), dimension(3)      :: r_ij_cart, f_ij
     real(double)                    :: mod_r_ij, mod_f, pe
 
-    mdr%pe = zero
+    mdr%mdl%E_p = zero
     mdr%f = zero
     mdr%virial = zero
     mdr%static_stress = zero
@@ -497,7 +480,7 @@ contains
                                             mod_f, pe)
             f_ij = mod_f*norm(r_ij_cart)
             mdr%f(iat,:) = mdr%f(iat,:) + f_ij
-            mdr%pe = mdr%pe + pe
+            mdr%mdl%E_p = mdr%mdl%E_p + pe
             ! compute virial
             mdr%virial = mdr%virial + dot_product(f_ij, r_ij_cart)
             mdr%static_stress = mdr%static_stress + &
@@ -506,11 +489,11 @@ contains
         end if
       end do
     end do
-    mdr%pe = mdr%pe*half
+    mdr%mdl%E_p = mdr%mdl%E_p*half
     mdr%static_stress = mdr%static_stress*half
     mdr%virial = third*mdr%virial/mdr%V ! The configurational part of the &
                                         ! virial, used in iso-mttk barostat
-    write(*,'("  Potential energy = ",e16.8)') mdr%pe
+    write(*,'("  Potential energy = ",e16.8)') mdr%mdl%E_p
 
   end subroutine get_force_and_energy_ghost
 
@@ -525,7 +508,7 @@ contains
     real(double), dimension(3)      :: r_ij_cart, f_ij
     real(double)                    :: mod_r_ij, mod_f, pe
 
-    mdr%pe = zero
+    mdr%mdl%E_p = zero
     mdr%f = zero
     mdr%virial = zero
     mdr%static_stress = zero
@@ -544,7 +527,7 @@ contains
           f_ij = mod_f*norm(r_ij_cart)
           mdr%f(iat,:) = mdr%f(iat,:) + f_ij
           mdr%f(jat,:) = mdr%f(jat,:) - f_ij
-          mdr%pe = mdr%pe + pe
+          mdr%mdl%E_p = mdr%mdl%E_p + pe
           ! compute virial
           mdr%virial = mdr%virial + dot_product(f_ij, r_ij_cart)
           mdr%static_stress = mdr%static_stress + &
@@ -552,10 +535,10 @@ contains
         end if
       end do
     end do
-    ! mdr%pe = mdr%pe*half
+    ! mdr%mdl%E_p = mdr%mdl%E_p*half
     mdr%virial = third*mdr%virial/mdr%V ! The configurational part of the &
                                         ! virial, used in iso-mttk barostat
-    write(*,'("  Potential energy = ",e16.8)') mdr%pe
+    write(*,'("  Potential energy = ",e16.8)') mdr%mdl%E_p
 
   end subroutine get_force_and_energy_frac
 
@@ -568,15 +551,15 @@ contains
     ! local variables
     integer   :: i
 
-    mdr%ke = zero
+    mdr%mdl%E_k = zero
     mdr%kinetic_stress = zero
     do i=1,mdr%nat
-      mdr%ke = mdr%ke + mdr%mass(i)*sum(mdr%v_t(i,:)**2)
+      mdr%mdl%E_k = mdr%mdl%E_k + mdr%mass(i)*sum(mdr%v_t(i,:)**2)
       mdr%kinetic_stress = mdr%kinetic_stress + &
                       mdr%mass(i)*tensor_product(mdr%v_t(i,:), mdr%v_t(i,:))
     end do
-    mdr%ke = mdr%ke/two
-    write(*,'("  Kinetic energy   = ",e16.8)') mdr%ke
+    mdr%mdl%E_k = mdr%mdl%E_k/two
+    write(*,'("  Kinetic energy   = ",e16.8)') mdr%mdl%E_k
 
   end subroutine get_kinetic_energy
 
@@ -587,7 +570,7 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     mdr%V = mdr%p_t%volume()
-    mdr%pv = mdr%V*mdr%P_ext ! Should use the target pressure according to MTTK
+    mdr%mdl%PV = mdr%V*mdr%P_ext ! Should use the target pressure according to MTTK
     write(*,'("  volume           = ",e16.8)') mdr%V
     write(*,'("  PV               = ",e16.8)') mdr%PV
 
@@ -645,19 +628,29 @@ contains
     debug_unit_1 = 109
     debug_unit_1 = 110
 
-    open(unit=traj_unit, file=mdr%position_file, status='replace')
-    open(unit=dump_unit, file=mdr%dump_file, status='replace')
-    open(unit=stat_unit, file=mdr%stat_file, status='replace')
-    if (mdr%iprint > 2) then
-      open(debug_unit_1, file='baro_state', status='replace')
-      open(debug_unit_2, file='thermo_state', status='replace')
+    if (mdr%restart) then
+      open(unit=traj_unit,file=mdr%position_file,status='old',position='append')
+      open(unit=dump_unit,file=mdr%dump_file, status='old',position='append')
+      open(unit=stat_unit,file=mdr%stat_file, status='old',position='append')
+      if (mdr%iprint > 2) then
+        open(debug_unit_1,file='baro_state', status='old',position='append')
+        open(debug_unit_2,file='thermo_state', status='old',position='append')
+      end if
+    else
+      open(unit=traj_unit,file=mdr%position_file,status='replace')
+      open(unit=dump_unit,file=mdr%dump_file,status='replace')
+      open(unit=stat_unit,file=mdr%stat_file,status='replace')
+      if (mdr%iprint > 2) then
+        open(debug_unit_1,file='baro_state',status='replace')
+        open(debug_unit_2,file='thermo_state',status='replace')
+      end if
     end if
 
     if (mdr%restart .eqv. .false.) then
       ! Only dump the initial configuration before the first step
       s = 0
       call mdr%p_t%write_xsf(traj_unit, .true., 1, (s_end/mdr%dump_freq)+1)
-      call mdr%stat_dump(stat_unit, s)
+      call mdr%mdl%stat_dump(stat_unit, s)
       if (mdr%dump .eqv. .true.) then
         if (mdr%dump_freq == 0) call mdr%md_dump(dump_unit, s)
       end if
@@ -665,8 +658,7 @@ contains
       mdr%step = mdr%step + 1
     end if
 
-    ! Main MD loop
-    do s=s_start,s_end
+    do s=s_start,s_end ! Main MD loop
       mdr%step = s
       d = .false.
       if (mod(s,mdr%dump_freq) == 0) d = .true.
@@ -679,15 +671,15 @@ contains
         if (mdr%thermo_type == 'nhc') then
           call mdr%th%propagate_nvt_nhc(mdr%dt, mdr%v_t)
         else if (mdr%thermo_type == 'berendsen') then
-          call mdr%th%get_berendsen_thermo_sf(mdr%T_int)
+          call mdr%th%get_berendsen_thermo_sf
         end if
       case('npt')
         if (mdr%baro_type == 'mttk' .or. mdr%baro_type == 'iso-mttk' .or. &
             mdr%baro_type == 'ortho-mttk') then
-          call mdr%baro%propagate_npt_mttk(mdr%th, mdr%dt, mdr%ke, mdr%v_t)
+          call mdr%baro%propagate_npt_mttk(mdr%th, mdr%dt, mdr%mdl%E_k, mdr%v_t)
         end if
         if (mdr%thermo_type == 'berendsen') then
-          call mdr%th%get_berendsen_thermo_sf(mdr%T_int)
+          call mdr%th%get_berendsen_thermo_sf
         end if
       end select
       ! Velocity Verlet dt/2 step
@@ -713,7 +705,7 @@ contains
           mdr%p_t%V = mdr%p_t%volume()
           mdr%V = mdr%p_t%V
         case('berendsen')
-          call mdr%baro%get_berendsen_baro_sf(mdr%P_int)
+          call mdr%baro%get_berendsen_baro_sf
           call mdr%vVerlet_r(mdr%dt, one) ! velocity Verlet r update
         end select
       else
@@ -733,9 +725,7 @@ contains
       end if
       call mdr%baro%update_stress(mdr%static_stress, mdr%kinetic_stress)
       call mdr%baro%get_stress_and_pressure
-      mdr%P_int = mdr%baro%P_int
-      call mdr%th%get_temperature
-      mdr%T_int = mdr%th%T_int
+      call mdr%th%get_temperature(mdr%mdl%E_k)
 
       ! Velocity Verlet dt/2 step
       call mdr%vVerlet_v(mdr%dt, half)
@@ -751,7 +741,7 @@ contains
       case('npt')
         if (mdr%baro_type=='mttk' .or. mdr%baro_type=='iso-mttk' .or. &
             mdr%baro_type=='ortho-mttk') then
-          call mdr%baro%propagate_npt_mttk(mdr%th, mdr%dt, mdr%ke, mdr%v_t)
+          call mdr%baro%propagate_npt_mttk(mdr%th, mdr%dt, mdr%mdl%E_k, mdr%v_t)
         end if
         if (mdr%baro_type == 'berendsen') then
           ! Propagate the Berendsen barostat after the velocity update so that
@@ -770,20 +760,18 @@ contains
 
       call mdr%get_kinetic_energy
       call mdr%get_cons_qty ! Compute the conserved quantity
-      call mdr%th%get_temperature
-      mdr%T_int = mdr%th%T_int
       call mdr%baro%update_stress(mdr%static_stress, mdr%kinetic_stress)
       call mdr%baro%get_stress_and_pressure
-      mdr%P_int = mdr%baro%P_int
-      if (mdr%ensemble(3:3) == 't') mdr%th%ke_atoms = mdr%ke
-      if (mdr%ensemble(3:3) == 'p') mdr%baro%ke_atoms = mdr%ke
+      call mdr%th%get_temperature(mdr%mdl%E_k)
+      if (mdr%ensemble(3:3) == 't') mdr%th%ke_atoms = mdr%mdl%E_k
+      if (mdr%ensemble(3:3) == 'p') mdr%baro%ke_atoms = mdr%mdl%E_k
       if (mdr%ensemble(2:2) == 'p') call mdr%get_pv
 
       ! Write the checkpoint
       if (mod(s,mdr%cp_freq) == 0) call mdr%write_checkpoint(cp_unit, s)
 
       ! Dump the statistics
-      call mdr%stat_dump(stat_unit, s)
+      call mdr%mdl%stat_dump(stat_unit, s)
       if (mdr%dump .eqv. .true.) then
         if (d .eqv. .true.) then
           call mdr%md_dump(dump_unit, s)
@@ -820,34 +808,32 @@ contains
     ! passed variables
     class(type_md), intent(inout)             :: mdr
 
+    write(*,*)
+    write(*,'("  Components of conserved quantity:")')
     ! For the NVE ensemble, the conserved quantity is just the total energy
-    mdr%e_nve = mdr%ke + mdr%pe
-    mdr%h_prime = zero
-    mdr%h_prime = mdr%h_prime + mdr%e_nve
-
-    write(*,'("  Total energy     = ",e16.8)') mdr%e_nve
+    mdr%mdl%H_prime = mdr%mdl%E_k + mdr%mdl%E_p
+    write(*,'("  Kinetic energy   = ",e16.8)') mdr%mdl%E_k
+    write(*,'("  Potential energy = ",e16.8)') mdr%mdl%E_p
+    write(*,'("  Total energy     = ",e16.8)') mdr%mdl%H_prime
     ! For NVT (NHC), add the NHC energy
     if (mdr%thermo_type == 'nhc') then
-      mdr%e_nhc = mdr%th%e_nhc
-      mdr%h_prime = mdr%h_prime + mdr%e_nhc
-      write(*,'("  NHC energy       = ",e16.8)') mdr%e_nhc
+      mdr%mdl%H_prime = mdr%mdl%H_prime + mdr%mdl%E_nhc
+      write(*,'("  NHC energy       = ",e16.8)') mdr%mdl%E_nhc
     end if
     ! For NPT, add the NHC energy, the box kinetic energy and the PV term
     if (mdr%baro_type == 'mttk') then
-      mdr%ke_box = half*mdr%baro%ke_box
-      mdr%h_prime = mdr%h_prime + mdr%ke_box
-      mdr%h_prime = mdr%h_prime + mdr%pv
-      write(*,'("  Box energy       = ",e16.8)') mdr%ke_box
-      write(*,'("  PV               = ",e16.8)') mdr%pv
+      mdr%mdl%H_prime = mdr%mdl%H_prime + mdr%mdl%E_box
+      mdr%mdl%H_prime = mdr%mdl%H_prime + mdr%mdl%PV
+      write(*,'("  Box energy       = ",e16.8)') mdr%mdl%E_box
+      write(*,'("  PV               = ",e16.8)') mdr%mdl%PV
     else if (mdr%baro_type == 'iso-mttk') then
-      mdr%ke_box = mdr%baro%ke_box
-      mdr%h_prime = mdr%h_prime + mdr%ke_box
-      mdr%h_prime = mdr%h_prime + mdr%pv
-      write(*,'("  Box energy       = ",e16.8)') mdr%ke_box
-      write(*,'("  PV               = ",e16.8)') mdr%pv
+      mdr%mdl%H_prime = mdr%mdl%H_prime + mdr%mdl%E_box
+      mdr%mdl%H_prime = mdr%mdl%H_prime + mdr%mdl%PV
+      write(*,'("  Box energy       = ",e16.8)') mdr%mdl%E_box
+      write(*,'("  PV               = ",e16.8)') mdr%mdl%PV
     end if
-    write(*,'("  Total energy     = ",e16.8)') mdr%e_nve
-    write(*,'(2x,a3,a7,a6,a3,e16.8)') mdr%ensemble, ' energy', '       ', ' = ', mdr%h_prime
+    write(*,'(2x,a3,a7,a6,a3,e16.8)') mdr%ensemble, ' energy', '       ', ' = ', mdr%mdl%H_prime
+    write(*,*)
 
   end subroutine get_cons_qty
 
@@ -928,60 +914,6 @@ contains
 
   end subroutine md_dump
 
-  ! Dump thermodyanmic statistics
-  subroutine stat_dump(mdr, iunit, step)
-
-    ! passed variables
-    class(type_md), intent(inout)   :: mdr
-    integer, intent(in)             :: iunit
-    integer, intent(in)             :: step
-
-    if (step == 0) then
-      select case (mdr%ensemble)
-      case ('nve')
-        write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
-      case ('nvt')
-        if (mdr%thermo_type == 'nhc') then
-          write(iunit,'(a10,6a16)') "step", "pe", "ke", "nhc", "total", "T", "P"
-        else
-          write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
-        end if
-      case ('npt')
-        if (mdr%thermo_type == 'nhc') then
-          write(iunit,'(a10,9a16)') "step", "pe", "ke", "nhc", "box", "pV", "total", "T", "P", "V"
-        end if
-      if (mdr%baro_type == 'berendsen') then
-          write(iunit,'(a10,7a16)') "step", "pe", "ke", "pV", "total", "T", &
-                                    "P", "V"
-      end if
-    end select
-    end if
-    select case (mdr%ensemble)
-    case ('nve')
-      write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%e_nve, &
-                                  mdr%T_int, mdr%P_int
-    case ('nvt')
-      if (mdr%thermo_type == 'nhc') then
-        write(iunit,'(i10,6e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
-                                    mdr%h_prime, mdr%T_int, mdr%P_int
-      else
-        write(iunit,'(i10,5e16.6)') step, mdr%pe, mdr%ke, mdr%pe+mdr%ke, &
-                                    mdr%T_int, mdr%P_int
-      end if
-    case ('npt')
-      if (mdr%thermo_type == 'nhc') then
-        write(iunit,'(i10,9e16.6)') step, mdr%pe, mdr%ke, mdr%e_nhc, &
-                                    mdr%ke_box, mdr%pv, mdr%h_prime, &
-                                    mdr%T_int, mdr%P_int, mdr%V
-      end if
-      if (mdr%baro_type == 'berendsen') then
-        write(iunit,'(i10,9e16.6)') step, mdr%pe, mdr%ke, mdr%pv, &
-                                    mdr%h_prime, mdr%T_int, mdr%P_int, mdr%V
-      end if
-    end select
-
-  end subroutine stat_dump
-
   ! create a checkpoint for restarting
   subroutine write_checkpoint(mdr, iunit, step)
 
@@ -1015,13 +947,15 @@ contains
       write(iunit,*) mdr%th%G_nhc
     end if
     if (mdr%baro_type == 'iso-mttk') then
+      write(iunit,*) mdr%baro%V_ref
+      write(iunit,*) mdr%baro%V
       write(iunit,*) mdr%baro%eps
       write(iunit,*) mdr%baro%v_eps
       write(iunit,*) mdr%baro%G_eps
     end if
     if (mdr%baro_type == 'mttk') then
       do i=1,3
-        write(iunit,*) mdr%baro%h(i,:)
+        write(iunit,*) mdr%baro%h_ref(i,:)
       end do
       do i=1,3
         write(iunit,*) mdr%baro%v_h(i,:)
@@ -1066,12 +1000,14 @@ contains
       read(iunit,*) mdr%th%G_nhc
     end if
     if (mdr%baro_type == 'iso-mttk') then
+      read(iunit,*) mdr%baro%V_ref
+      read(iunit,*) mdr%baro%V
       read(iunit,*) mdr%baro%eps
       read(iunit,*) mdr%baro%v_eps
       read(iunit,*) mdr%baro%G_eps
     else if (mdr%baro_type == 'mttk') then
       do i=1,3
-        read(iunit,*) mdr%baro%h(i,:)
+        read(iunit,*) mdr%baro%h_ref(i,:)
       end do
       do i=1,3
         read(iunit,*) mdr%baro%v_h(i,:)

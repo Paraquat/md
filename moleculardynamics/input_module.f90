@@ -37,6 +37,7 @@ module input_module
     integer         :: n_nhc = 5            ! length of Nose-Hoover chain
     integer         :: n_mts = 1            ! multiple time step order
     integer         :: n_ys = 1             ! Yoshida-Suzuki order
+    logical         :: cell_nhc = .true.    ! use separate NHC for cell?
     real(double), dimension(:), allocatable :: nhc_mass
     real(double), dimension(:), allocatable :: cell_nhc_mass
 
@@ -138,6 +139,9 @@ subroutine read_input(inp, filename)
     case ('v_distr')
       read(param,*) inp%v_distr
       write(*,'("v_distr             ",a20)') inp%v_distr
+    case('cell_nhc')
+      read(param,*) inp%cell_nhc
+      write(*,'("v_distr             ",l20)') inp%cell_nhc
     case ('nhc_mass')
       if (inp%n_nhc > 0) then
         read(param,*) inp%nhc_mass

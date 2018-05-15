@@ -24,9 +24,8 @@ $(PROG): $(OBJS)
 %.o: %.mod
 
 input_module.o: input_module.f90
-md_control.o: md_control.f90 ../libzamaan/libzamaan.a
-isotropic_barostat_module.o: isotropic_barostat_module.f90 ../libzamaan/libzamaan.a
-md_model.o: md_model.f90 ../libzamaan/libzamaan.a
-md_module.o: md_module.f90 md_model.f90 md_control.f90
+md_control.o: md_control.f90 input_module.o ../libzamaan/libzamaan.a
+md_model.o: md_model.f90 md_control.o input_module.o ../libzamaan/libzamaan.a
+md_module.o: md_module.f90 md_control.o input_module.o md_model.o md_control.f90
 cmdline.o: cmdline.f90
 main.o: cmdline.o md_module.f90 main.f90 ../libzamaan/libzamaan.a

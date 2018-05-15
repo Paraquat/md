@@ -1,24 +1,34 @@
 module md_model
 
 use datatypes
+use input_module
+use cell
+use md_control
 
 implicit none
 
 type type_model
+
+  logical                                   :: append
   
   ! Positions, velocities, forces
-  real(double), dimension(:,:), allocatable :: r, r0
-  real(double), dimension(:,:), allocatable :: rcart, rcart0
-  real(double), dimension(:,:), allocatable :: v, v0
-  real(double), dimension(:,:), allocatable :: f, f0
+  real(double), dimension(:,:), pointer     :: r
+  real(double), dimension(:,:), pointer     :: rcart
+  real(double), dimension(:,:), pointer     :: v
+  real(double), dimension(:,:), pointer     :: f
+
+  ! real(double), dimension(:,:), allocatable :: r, r0
+  ! real(double), dimension(:,:), allocatable :: rcart, rcart0
+  ! real(double), dimension(:,:), allocatable :: v, v0
+  ! real(double), dimension(:,:), allocatable :: f, f0
 
   ! Species
-  integer, allocatable, dimension(:)        :: species
-  character(2), allocatable, dimension(:)   :: spec_label
-  real(double), allocatable, dimension(:)   :: mass
+  integer, dimension(:), pointer            :: species
+  character(2), dimension(:), pointer       :: spec_label
+  real(double), dimension(:), pointer       :: mass
 
   ! box
-  real(double), dimension(3,3)              :: h, h0
+  real(double), dimension(:,:), pointer     :: h, h0
 
   !  MD variables
   integer                                   :: step
@@ -32,62 +42,117 @@ type type_model
   integer                                   :: ndof
 
   ! Thermodynamic variables
-  real(double)                              :: T, T_ext
-  real(double)                              :: P, P_ext
-  real(double)                              :: vol, vol0
-  real(double)                              :: Ek, Ek0
-  real(double)                              :: Ep, Ep0
-  real(double)                              :: enthalpy, enthalpy0
-  real(double)                              :: pV, pV0
+  real(double), pointer                     :: T_int, T_ext
+  real(double), pointer                     :: P_int, P_ext
+  real(double), pointer                     :: vol, vol_ref
+  real(double)                              :: E_k
+  real(double)                              :: E_p
+  real(double)                              :: PV
   real(double)                              :: H_prime
-  real(double), dimension(3,3)              :: stress
+  real(double), dimension(:,:), pointer     :: kinetic_stress, static_stress
+  real(double), dimension(:,:), pointer     :: stress
 
   ! Thermostat
-  character(40)                             :: thermo_type
-  integer                                   :: n_nhc
-  real(double), dimension(:), allocatable   :: Q
-  real(double), dimension(:), allocatable   :: eta
-  real(double), dimension(:), allocatable   :: v_eta
-  real(double)                              :: G_eta
-  real(double)                              :: E_nhc
+  type(type_thermostat), pointer            :: th
+  character(40), pointer                    :: thermo_type
+  integer, pointer                          :: n_nhc
+  real(double), dimension(:), pointer       :: eta
+  real(double), dimension(:), pointer       :: eta_cell
+  real(double), dimension(:), pointer       :: v_eta
+  real(double), dimension(:), pointer       :: v_eta_cell
+  real(double), dimension(:), pointer       :: m_nhc
+  real(double), dimension(:), pointer       :: m_nhc_cell
+  real(double), dimension(:), pointer       :: G_eta
+  real(double), dimension(:), pointer       :: G_eta_cell
+  real(double), pointer                     :: E_nhc
 
   ! Barostat
-  character(40)                             :: baro_type
-  real(double)                              :: W_eps
-  real(double)                              :: eps
-  real(double)                              :: v_eps
-  real(double)                              :: G_eps
-  real(double)                              :: E_baro
-  real(double), dimension(3,3)              :: c_g
-  real(double)                              :: E_box
+  character(40), pointer                    :: baro_type
+  real(double), pointer                     :: m_box
+  real(double), pointer                     :: eps
+  real(double), pointer                     :: v_eps
+  real(double), pointer                     :: G_eps
+  real(double), pointer                     :: E_baro
+  real(double), dimension(:), pointer       :: Q
+  real(double), dimension(:), pointer       :: v_Q
+  real(double), dimension(:), pointer       :: G_Q
+  real(double), dimension(:,:), pointer     :: v_h
+  real(double), dimension(:,:), pointer     :: G_h
+  real(double), pointer                     :: E_box
 
 contains
   procedure :: init_model
   procedure :: dump_mdl_atom_arr
   procedure :: dump_frame
-  procedure :: mdl_stat_dump
+  procedure :: stat_dump
 
 end type type_model
 
 contains
 
-  subroutine init_model(mdl, nat, nspec)
+  subroutine init_model(mdl, inp, cell, v, f, th, baro, ndof)
 
     ! passed variables
-    class(type_model), intent(inout)  :: mdl
-    integer, intent(in)               :: nat, nspec
+    class(type_model), intent(inout)                  :: mdl
+    type(md_input), intent(in)                        :: inp
+    type(type_cell), intent(in), target               :: cell
+    real(double), dimension(:,:), intent(in), target  :: v, f
+    type(type_thermostat), intent(in), target         :: th
+    type(type_barostat), intent(in), target           :: baro
+    integer, intent(in)                               :: ndof
 
-    mdl%nat = nat
-    mdl%nspec = nspec
-    mdl%ndof = 3*nat
+    if (inp%restart) then
+      mdl%append = .true.
+    else
+      mdl%append = .false.
+    end if
 
-    allocate(mdl%r(nat,3), mdl%r0(nat,3))
-    allocate(mdl%rcart(nat,3), mdl%rcart0(nat,3))
-    allocate(mdl%v(nat,3), mdl%v0(nat,3))
-    allocate(mdl%f(nat,3), mdl%f0(nat,3))
-    allocate(mdl%species(nat))
-    allocate(mdl%spec_label(nspec))
-    allocate(mdl%mass(nspec))
+    mdl%ndof = ndof
+    mdl%nat = inp%natoms
+    mdl%dt = inp%dt
+    mdl%ensemble = inp%ensemble
+
+    mdl%E_nhc => th%e_nhc
+    mdl%E_box => baro%ke_box
+
+    mdl%r => cell%r
+    mdl%rcart => cell%rcart
+    mdl%h => cell%h
+    mdl%v => v
+    mdl%f => f
+
+    mdl%T_int       => th%T_int
+    mdl%T_ext       => th%T_ext
+    mdl%thermo_type => th%th_type
+    mdl%n_nhc       => th%n_nhc
+    mdl%eta         => th%eta
+    mdl%v_eta       => th%v_eta
+    mdl%G_eta       => th%G_nhc
+    mdl%m_nhc       => th%m_nhc
+    if (th%cell_nhc) then
+      mdl%eta_cell    => th%eta_cell
+      mdl%v_eta_cell  => th%v_eta_cell
+      mdl%G_eta_cell  => th%G_nhc_cell
+      mdl%m_nhc_cell  => th%m_nhc_cell
+    end if
+
+    mdl%P_int       => baro%P_int
+    mdl%P_ext       => baro%P_ext
+    mdl%vol         => baro%V
+    mdl%vol_ref     => baro%V_ref
+    mdl%stress      => baro%stress
+    mdl%kinetic_stress => baro%kinetic_stress
+    mdl%static_stress  => baro%static_stress
+    mdl%baro_type   => baro%baro_type
+    mdl%m_box       => baro%m_box
+    mdl%eps         => baro%eps
+    mdl%v_eps       => baro%v_eps
+    mdl%G_eps       => baro%G_eps
+    mdl%Q           => baro%Q
+    mdl%v_Q         => baro%v_Q
+    mdl%G_Q         => baro%G_Q
+    mdl%v_h         => baro%v_h
+    mdl%G_h         => baro%G_h
 
   end subroutine init_model
 
@@ -145,7 +210,7 @@ contains
   end subroutine dump_frame
 
  ! Dump thermodyanmic statistics
-  subroutine mdl_stat_dump(mdl, iunit, step)
+  subroutine stat_dump(mdl, iunit, step)
 
     ! passed variables
     class(type_model), intent(inout)  :: mdl
@@ -155,45 +220,46 @@ contains
     if (step == 0) then
       select case (mdl%ensemble)
       case ('nve')
-        write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
+        write(iunit,'(a10,5a16)') "step", "pe", "ke", "H'", "T", "P"
       case ('nvt')
         if (mdl%thermo_type == 'nhc') then
-          write(iunit,'(a10,6a16)') "step", "pe", "ke", "nhc", "total", "T", "P"
+          write(iunit,'(a10,6a16)') "step", "pe", "ke", "nhc", "H'", "T", "P"
         else
-          write(iunit,'(a10,5a16)') "step", "pe", "ke", "total", "T", "P"
+          write(iunit,'(a10,5a16)') "step", "pe", "ke", "H'", "T", "P"
         end if
       case ('npt')
         if (mdl%thermo_type == 'nhc') then
-          write(iunit,'(a10,9a16)') "step", "pe", "ke", "nhc", "box", "pV", "total", "T", "P", "V"
+          write(iunit,'(a10,9a16)') "step", "pe", "ke", "nhc", "box", "pV", "H'", "T", "P", "V"
         end if
       case ('nph')
-        write(iunit,'(a10,8a16)') "step", "pe", "ke", "box", "pV", "total", "T", "P", "V"
+        write(iunit,'(a10,8a16)') "step", "pe", "ke", "box", "pV", "H'", "T", "P", "V"
     end select
     end if
     select case (mdl%ensemble)
     case ('nve')
-      write(iunit,'(i10,5e16.6)') step, mdl%Ep, mdl%Ek, mdl%H_prime, &
-                                  mdl%T, mdl%P
+      write(iunit,'(i10,5e16.6)') step, mdl%E_p, mdl%E_k, mdl%H_prime, &
+                                  mdl%T_int, mdl%P_int
     case ('nvt')
       if (mdl%thermo_type == 'nhc') then
-        write(iunit,'(i10,6e16.6)') step, mdl%Ep, mdl%Ek, mdl%E_nhc, &
-                                    mdl%H_prime, mdl%T, mdl%P
+        write(iunit,'(i10,6e16.6)') step, mdl%E_p, mdl%E_k, mdl%E_nhc, &
+                                    mdl%H_prime, mdl%T_int, mdl%P_int
       else
-        write(iunit,'(i10,5e16.6)') step, mdl%Ep, mdl%Ek, mdl%H_prime, &
-                                    mdl%T, mdl%P
+        write(iunit,'(i10,5e16.6)') step, mdl%E_p, mdl%E_k, mdl%H_prime, &
+                                    mdl%T_int, mdl%P_int
       end if
     case ('npt')
       if (mdl%thermo_type == 'nhc') then
-        write(iunit,'(i10,9e16.6)') step, mdl%Ep, mdl%Ek, mdl%E_nhc, &
+        write(iunit,'(i10,9e16.6)') step, mdl%E_p, mdl%E_k, mdl%E_nhc, &
                                     mdl%E_box, mdl%pV, mdl%H_prime, &
-                                    mdl%T, mdl%P, mdl%V
+                                    mdl%T_int, mdl%P_int, mdl%V
       end if
     case ('nph')
-        write(iunit,'(i10,8e16.6)') step, mdl%Ep, mdl%Ek, mdl%E_box, &
-                                    mdl%pV, mdl%H_prime, mdl%T, mdl%P, mdl%V
+        write(iunit,'(i10,8e16.6)') step, mdl%E_p, mdl%E_k, mdl%E_box, &
+                                    mdl%pV, mdl%H_prime, mdl%T_int, &
+                                    mdl%P_int, mdl%V
     end select
 
-  end subroutine mdl_stat_dump
+  end subroutine stat_dump
 
 
 end module md_model

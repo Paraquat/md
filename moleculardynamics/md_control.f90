@@ -22,15 +22,15 @@ type type_thermostat
   character(40)       :: th_type
   logical             :: cell_nhc ! whether to use a separate NHC for the cell
   character(3)        :: ensemble
-  real(double), dimension(:), allocatable   :: eta   ! thermostat k position
-  real(double), dimension(:), allocatable   :: eta_cell
-  real(double), dimension(:), allocatable   :: v_eta ! thermostat k velocity
-  real(double), dimension(:), allocatable   :: v_eta_cell
-  real(double), dimension(:), allocatable   :: G_nhc ! force on thermostat k
-  real(double), dimension(:), allocatable   :: G_nhc_cell
-  real(double), dimension(:), allocatable   :: m_nhc ! thermostat k mass
-  real(double), dimension(:), allocatable   :: m_nhc_cell
-  real(double), dimension(:), allocatable   :: dt_ys ! Y-S time steps
+  real(double), dimension(:), allocatable :: eta   ! thermostat k position
+  real(double), dimension(:), allocatable :: eta_cell
+  real(double), dimension(:), allocatable :: v_eta ! thermostat k velocity
+  real(double), dimension(:), allocatable :: v_eta_cell
+  real(double), dimension(:), allocatable :: G_nhc ! force on thermostat k
+  real(double), dimension(:), allocatable :: G_nhc_cell
+  real(double), dimension(:), allocatable :: m_nhc ! thermostat k mass
+  real(double), dimension(:), allocatable :: m_nhc_cell
+  real(double), dimension(:), allocatable :: dt_ys ! Y-S time steps
 
 contains
 
@@ -68,7 +68,7 @@ type type_barostat
   real(double)                  :: V_ref    ! reference volume
   real(double)                  :: odnf
   real(double), dimension(3,3)  :: h        ! current cell
-  real(double), dimension(3,3)  :: h_0      ! refernce cell
+  real(double), dimension(3,3)  :: h_ref      ! refernce cell
   real(double), dimension(3,3)  :: h_scale  ! cells scaling factors
   real(double), dimension(3,3)  :: stress   ! stress tensor
   real(double), dimension(3,3)  :: stress_ext
@@ -113,6 +113,9 @@ contains
   procedure, public  :: propagate_eps_lin
   procedure, private :: propagate_v_eps_lin
   procedure, private :: propagate_v_eps_exp
+  procedure, private :: propagate_Q_lin
+  procedure, private :: propagate_v_Q_lin
+  procedure, private :: propagate_v_Q_exp
   procedure, public  :: propagate_box
   procedure, private :: diag_vbox
   procedure, public  :: get_Ie
@@ -140,7 +143,6 @@ subroutine init_thermostat(th, inp, ndof, ke_atoms)
 
   th%ndof = ndof
   th%ke_atoms = ke_atoms
-  call th%get_temperature
   th%th_type = inp%thermo_type
   th%ensemble = inp%ensemble
   th%nat = inp%natoms
@@ -153,6 +155,7 @@ subroutine init_thermostat(th, inp, ndof, ke_atoms)
   th%n_ys = inp%n_ys
   if (th%th_type == 'nhc') then
     th%n_nhc = inp%n_nhc
+    th%cell_nhc = inp%cell_nhc
     call th%init_nhc(th%n_nhc, inp%nhc_mass, inp%cell_nhc_mass)
   end if
   call th%init_ys
@@ -259,13 +262,16 @@ subroutine init_ys(th)
 
 end subroutine init_ys
 
-subroutine get_temperature(th)
+subroutine get_temperature(th, ke_atoms)
 
   ! passed variables
   class(type_thermostat), intent(inout)       :: th
+  real(double), intent(in)                    :: ke_atoms
 
+  if (th%iprint > 1) write(*,'(2x,a)') "get_temperature"
+  th%ke_atoms = ke_atoms
   th%T_int = two*th%ke_atoms/th%k_B_md/real(th%ndof,double)
-    write(*,'(6x,a,f16.8)') "Temperature = ", th%T_int
+  write(*,'(2x,a,f16.8)') "Temperature = ", th%T_int
 
 end subroutine get_temperature
 
@@ -286,13 +292,12 @@ subroutine velocity_rescale(th, T_int, v)
   if (th%iprint > 1) write(*,'(4x,"Velocity rescale, lambda = ",f8.4)') lambda
 end subroutine velocity_rescale
 
-subroutine get_berendsen_thermo_sf(th, T_int)
+subroutine get_berendsen_thermo_sf(th)
 
   ! passed variables
   class(type_thermostat), intent(inout)       :: th
-  real(double), intent(in)                    :: T_int
 
-  th%lambda = sqrt(one + (th%dt/th%tau_T)*(th%T_ext/T_int - one))
+  th%lambda = sqrt(one + (th%dt/th%tau_T)*(th%T_ext/th%T_int - one))
   if (th%iprint > 1) then
     write(*,'(4x,"Weak coupling, thermostat lambda = ",f8.4)') th%lambda
   end if
@@ -389,9 +394,9 @@ subroutine propagate_eta(th, k, dt, dtfac)
     th%eta_cell(k) = th%eta_cell(k) + dtfac*dt*th%v_eta(k)
   end if
   if (th%iprint > 1) then
-    write(*,'(6x,"NHC: propagating eta,      k = ",i2," eta = ",f12.8)') k, th%eta(k)
+    write(*,'(6x,"NHC: propagating eta,      k = ",i2," eta = ",f16.8)') k, th%eta(k)
     if (th%cell_nhc) then
-      write(*,'(6x,"NHC: propagating eta_cell, k = ",i2," eta = ",f12.8)') k, th%eta_cell(k)
+      write(*,'(6x,"NHC: propagating eta_cell, k = ",i2," eta = ",f16.8)') k, th%eta_cell(k)
     end if
   end if
 
@@ -411,9 +416,9 @@ subroutine propagate_v_eta_lin(th, k, dt, dtfac)
   end if
 
   if (th%iprint > 1) then
-    write(*,'(6x,"NHC: propagating v_eta linear,      k = ",i2," v_eta = ",f12.8)') k, th%v_eta(k)
+    write(*,'(6x,"NHC: propagating v_eta linear,      k = ",i2," v_eta = ",f16.8)') k, th%v_eta(k)
     if (th%cell_nhc) then
-      write(*,'(6x,"NHC: propagating v_eta_cell linear, k = ",i2," v_eta = ",f12.8)') k, th%v_eta_cell(k)
+      write(*,'(6x,"NHC: propagating v_eta_cell linear, k = ",i2," v_eta = ",f16.8)') k, th%v_eta_cell(k)
     end if
   end if
 
@@ -433,9 +438,9 @@ subroutine propagate_v_eta_exp(th, k, dt, dtfac)
   end if
 
   if (th%iprint > 1) then
-    write(*,'(6x,"NHC: propagating v_eta exp,         k = ",i2," v_eta = ",f12.8)') k, th%v_eta(k)
+    write(*,'(6x,"NHC: propagating v_eta exp,         k = ",i2," v_eta = ",f16.8)') k, th%v_eta(k)
     if (th%cell_nhc) then
-      write(*,'(6x,"NHC: propagating v_eta_cell exp,    k = ",i2," v_eta = ",f12.8)') k, th%v_eta_cell(k)
+      write(*,'(6x,"NHC: propagating v_eta_cell exp,    k = ",i2," v_eta = ",f16.8)') k, th%v_eta_cell(k)
     end if
   end if
 
@@ -537,6 +542,7 @@ subroutine dump_thermo_state(th, step, funit)
 
   write(fmt,'("(a8,",i4,"e16.4)")') th%n_nhc
   write(funit,'("step   ",i12)') step
+  write(funit,'("T_int  ",f12.8)') th%T_int
   if (th%th_type == 'nhc') then
     write(funit,fmt) "eta:    ", th%eta
     write(funit,fmt) "v_eta:  ", th%v_eta
@@ -576,7 +582,7 @@ subroutine init_barostat(baro, inp, ndof, ke_atoms, init_cell)
   baro%V = init_cell%V
   baro%V_ref = baro%V
   baro%h = init_cell%h
-  baro%h_0 = baro%h
+  baro%h_ref = baro%h
   baro%bulkmod = inp%bulkmod
 
   baro%k_B_md = one
@@ -595,24 +601,23 @@ subroutine init_barostat(baro, inp, ndof, ke_atoms, init_cell)
 
 end subroutine init_barostat
 
-subroutine get_berendsen_baro_sf(baro, dt)
+subroutine get_berendsen_baro_sf(baro)
 
   ! Passed variables
   class(type_barostat), intent(inout)       :: baro
-  real(double), intent(in)                  :: dt
 
   if (baro%iprint > 1) then
     write(*,'(6x,a)') "Getting berendsen barostat scaling factor"
   end if
   select case(baro%baro_type)
   case('berendsen')
-    baro%mu = (one - (dt/baro%tau_P)*(baro%P_ext-baro%P_int)/baro%bulkmod)**third
+    baro%mu = (one - (baro%dt/baro%tau_P)*(baro%P_ext-baro%P_int)/baro%bulkmod)**third
     baro%mu_h = baro%ident*baro%mu
     if (baro%iprint > 1) then
       write(*,'(6x,a,f12.6)') "mu   = ", baro%mu
     end if
   case('ortho-berendsen')
-    baro%mu_h = baro%ident - (dt/baro%tau_P)*(baro%stress_ext-baro%stress)/baro%bulkmod
+    baro%mu_h = baro%ident - (baro%dt/baro%tau_P)*(baro%stress_ext-baro%stress)/baro%bulkmod
     if (baro%iprint > 1) then
       write(*,'(6x,a,3f12.6)') "mu_h = ", baro%mu_h(1,:)
       write(*,'(6x,a,3f12.6)') "       ", baro%mu_h(2,:)
@@ -719,6 +724,46 @@ subroutine propagate_v_eps_exp(baro, dt, dtfac, v_eta_1)
   if (baro%iprint > 1) write(*,'(6x,a,f12.8)') "MTTK: propagating v_eps exp factor: v_eps = ", baro%v_eps
   
 end subroutine propagate_v_eps_exp
+
+subroutine propagate_Q_lin(baro, dt, dtfac)
+
+  ! Passed variables
+  class(type_barostat), intent(inout)   :: baro
+  real(double), intent(in)              :: dt
+  real(double), intent(in)              :: dtfac
+
+  baro%Q = baro%Q + dtfac*dt*baro%v_Q
+
+  if (baro%iprint > 1) write(*,'(6x,a,3f12.8)') "MTTK: propagating Q lin shift: Q = ", baro%Q
+
+end subroutine propagate_Q_lin
+
+subroutine propagate_v_Q_lin(baro, dt, dtfac)
+
+  ! Passed variables
+  class(type_barostat), intent(inout)   :: baro
+  real(double), intent(in)              :: dt
+  real(double), intent(in)              :: dtfac
+
+  baro%v_Q = baro%v_Q + dtfac*dt*baro%G_Q
+
+  if (baro%iprint > 1) write(*,'(6x,a,3f12.8)') "MTTK: propagating v_Q lin shift: v_Q = ", baro%v_Q
+
+end subroutine propagate_v_Q_lin
+
+subroutine propagate_v_Q_exp(baro, dt, dtfac, v_eta_1)
+
+  ! Passed variables
+  class(type_barostat), intent(inout)   :: baro
+  real(double), intent(in)              :: dt
+  real(double), intent(in)              :: dtfac
+  real(double), intent(in)              :: v_eta_1
+
+  baro%v_Q = baro%v_Q*exp(-dt*dtfac*v_eta_1)
+
+  if (baro%iprint > 1) write(*,'(6x,a,3f12.8)') "MTTK: propagating v_Q exp factor: v_Q = ", baro%v_Q
+
+end subroutine propagate_v_Q_exp
 
 subroutine propagate_r_ions(baro, dt, dtfac, v, r)
 
@@ -933,13 +978,19 @@ subroutine get_stress_and_pressure(baro)
   ! local variables
   integer                         :: i
 
+  if (baro%iprint > 1) write(*,'(2x,a)') "get_stress_and_pressure"
   baro%stress = -(one/baro%V)*(baro%kinetic_stress + baro%static_stress)
   if (baro%iprint > 1) then
     write(*,*)
-    write(*,'(4x,a36,4x,a36)') "kinetic stress", "static stress"
+    write(*,'(4x,a36,4x,a36)') "static stress", "kinetic stress"
     do i=1,3
-      write(*,'(4x,3f12.4,4x,3f12.4)') baro%kinetic_stress(i,:), &
-                                       baro%static_stress(i,:)
+      write(*,'(4x,3f12.4,4x,3f12.4)') baro%static_stress(i,:), &
+                                       baro%kinetic_stress(i,:)
+    end do
+    write(*,*)
+    write(*,'(4x,a36)') "scaled total stress"
+    do i=1,3
+      write(*,'(4x,3f12.4)') baro%stress(i,:)
     end do
     write(*,*)
   end if
@@ -949,12 +1000,7 @@ subroutine get_stress_and_pressure(baro)
     baro%P_int = baro%P_int + baro%stress(i,i)
   end do
   baro%P_int = baro%P_int*third
-
   write(*,'("  Pressure         = ",f16.8)') baro%P_int
-  write(*,'(2x,a)') "Stress tensor:"
-  do i=1,3
-    write(*,'(4x,3f16.8)') baro%stress(i,:)
-  end do
 
 end subroutine get_stress_and_pressure
 
