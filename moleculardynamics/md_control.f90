@@ -11,11 +11,13 @@ implicit none
 type type_thermostat
 
   real(double)        :: T_int, T_ext, k_B_md, ke_atoms
-  integer             :: nat, ndof, iprint
+  integer             :: nat, ndof, iprint, cell_ndof
   integer             :: n_ys    ! Yoshida-Suzuki order
   integer             :: n_nhc   ! number of nh chains
   integer             :: n_mts   ! number of NHC loops per time step
   real(double)        :: e_nhc   ! NHC contribution to the conserved term
+  real(double)        :: e_nhc_atoms
+  real(double)        :: e_nhc_cell
   real(double)        :: tau_T   ! temperature coupling time period
   real(double)        :: dt      ! time step
   real(double)        :: lambda  ! Berendsen scaling factor
@@ -46,7 +48,7 @@ contains
   procedure :: propagate_v_eta_lin
   procedure :: propagate_v_eta_exp
   procedure :: propagate_nvt_nhc
-  procedure :: get_nhc_ke
+  procedure :: get_nhc_energy
   procedure :: dump_thermo_state
 
 end type type_thermostat
@@ -81,6 +83,7 @@ type type_barostat
   real(double)                  :: eps
   real(double)                  :: v_eps
   real(double)                  :: G_eps
+  real(double), dimension(3)    :: Q_ref
   real(double), dimension(3)    :: Q
   real(double), dimension(3)    :: v_Q
   real(double), dimension(3)    :: G_Q
@@ -120,12 +123,13 @@ contains
   procedure, private :: diag_vbox
   procedure, public  :: get_Ie
   procedure, public  :: get_Is
-  procedure, private :: propagate_v_h_1
-  procedure, private :: propagate_v_h_2
+  procedure, private :: propagate_v_h_lin
+  procedure, private :: propagate_v_h_exp
   procedure, public  :: propagate_v_ions
   procedure, public  :: propagate_r_ions
   procedure, public  :: propagate_h
   procedure, public  :: propagate_npt_mttk
+  procedure, private :: update_ke_atoms
   procedure, public  :: dump_baro_state
 
 end type type_barostat
@@ -141,6 +145,7 @@ subroutine init_thermostat(th, inp, ndof, ke_atoms)
   integer, intent(in)                       :: ndof
   real(double), intent(in)                  :: ke_atoms
 
+  if (th%iprint > 1) write(*,'(2x,a)') "init_thermostat"
   th%ndof = ndof
   th%ke_atoms = ke_atoms
   th%th_type = inp%thermo_type
@@ -153,12 +158,16 @@ subroutine init_thermostat(th, inp, ndof, ke_atoms)
   th%k_B_md = one
   th%n_mts = inp%n_mts
   th%n_ys = inp%n_ys
+  write(*,'(a)') "Initialising thermostat:"
+  write(*,'(2x,"thermostat type               ",a20)') th%th_type
+  write(*,'(2x,"thermostat time constant      ",f20.6)') th%tau_T
   if (th%th_type == 'nhc') then
     th%n_nhc = inp%n_nhc
     th%cell_nhc = inp%cell_nhc
     call th%init_nhc(th%n_nhc, inp%nhc_mass, inp%cell_nhc_mass)
   end if
   call th%init_ys
+  write(*,*)
 
 end subroutine init_thermostat
 
@@ -173,6 +182,7 @@ subroutine init_ys(th)
   real(double), dimension(:,:), allocatable :: psuz
   real(double)                              :: xnt
 
+  if (th%iprint > 1) write(*,'(a)') "init_ys"
   allocate(psuz(th%n_ys,5))
   allocate(th%dt_ys(th%n_ys))
 
@@ -319,9 +329,14 @@ end subroutine berendsen_thermo_propagate
 subroutine init_nhc(th, n_nhc, m_nhc, m_nhc_cell)
 
   ! passed variables
-  class(type_thermostat), intent(inout) :: th
-  integer, intent(in)                   :: n_nhc
+  class(type_thermostat), intent(inout)   :: th
+  integer, intent(in)                     :: n_nhc
   real(double), dimension(:), intent(in)  :: m_nhc, m_nhc_cell
+
+  ! local variables
+  integer                                 :: i
+
+  if (th%iprint > 1) write(*,'(2x,a)') "init_nhc"
 
   th%n_nhc = n_nhc
   allocate(th%eta(n_nhc))
@@ -338,14 +353,28 @@ subroutine init_nhc(th, n_nhc, m_nhc, m_nhc_cell)
   end if
 
   th%eta = zero
-  if (th%n_nhc > 0) then
-    th%m_nhc = one
-    th%v_eta = sqrt(two*th%T_ext/th%m_nhc(1))
-  else
-    th%v_eta = zero
-  end if
+  th%v_eta = sqrt(two*th%T_ext/th%m_nhc(1))
   th%G_nhc = zero
-  call th%get_nhc_ke
+  if (th%cell_nhc) then
+    th%eta_cell = zero
+    th%v_eta_cell = sqrt(two*th%T_ext/th%m_nhc_cell(1))
+    th%G_nhc_cell = zero
+  end if
+
+  write(*,'(2x,"NHC length                    ",i20)') th%n_nhc
+  write(*,'(2x,a)') "NHC heat bath parameters:"
+  write(*,'(4x,3a12)') 'eta', 'v_eta', 'mass'
+  do i=1,th%n_nhc
+    write(*,'(4x,3f12.4)') th%eta(i), th%v_eta(i), th%m_nhc(i)
+  end do
+  if (th%cell_nhc) then
+    write(*,'(2x,a)') "Cell NHC heat bath parameters:"
+    write(*,'(4x,3a12)') 'eta', 'v_eta', 'mass'
+    do i=1,th%n_nhc
+      write(*,'(4x,3f12.4)') th%eta_cell(i), th%v_eta_cell(i), th%m_nhc_cell(i)
+    end do
+  end if
+  call th%get_nhc_energy
 
 end subroutine init_nhc
 
@@ -509,24 +538,39 @@ subroutine propagate_nvt_nhc(th, dt, v)
 end subroutine propagate_nvt_nhc
 
 ! Compute the "NHC energy" for monitoring the conserved quantity (KE + PE + NHC energy)
-subroutine get_nhc_ke(th)
+subroutine get_nhc_energy(th)
 
   ! passed variables
   class(type_thermostat), intent(inout) :: th
 
-  if (th%n_nhc > 0) then
-    th%e_nhc = half*sum(th%m_nhc*th%v_eta**2)
-    th%e_nhc = th%e_nhc + th%ndof*th%k_B_md*th%T_ext*th%eta(1)
-    th%e_nhc = th%e_nhc + th%k_B_md*th%T_ext*sum(th%eta(2:))
-  else
-    th%e_nhc = zero
+  ! local varialbes
+  integer                               :: k
+
+  if (th%iprint > 1) write(*,'(6x,a)') "NHC: get_nhc_energy"
+  th%e_nhc = zero
+  th%e_nhc_atoms = half*th%m_nhc(1)*th%v_eta(1)**2 + th%ndof*th%T_ext*th%eta(1)
+  do k=2,th%n_nhc
+    th%e_nhc_atoms = th%e_nhc_atoms + half*th%m_nhc(k)*th%v_eta(k)**2 + &
+               th%T_ext*th%eta(k)
+  end do
+  if (th%cell_nhc) then
+    th%e_nhc_cell = half*th%m_nhc_cell(1)*th%v_eta_cell(1)**2 + &
+                    th%cell_ndof*th%T_ext*th%eta_cell(1)
+    do k=2,th%n_nhc
+      th%e_nhc_cell = th%e_nhc_cell + &
+                      half*th%m_nhc_cell(k)*th%v_eta_cell(k)**2 + &
+                      th%T_ext*th%eta_cell(k)
+    end do
   end if
 
+  th%e_nhc = th%e_nhc_atoms + th%e_nhc_cell
   if (th%iprint > 1) then
-    write(*,'(6x,a,e16.8)') "Updating nhc energy: e_nhc = ", th%e_nhc
+    write(*,'(6x,a,e16.8)') "atom nhc energy: e_nhc_atoms = ", th%e_nhc_atoms
+    write(*,'(6x,a,e16.8)') "cell nhc energy: e_nhc_cell  = ", th%e_nhc_cell
+    write(*,'(6x,a,e16.8)') "total nhc energy: e_nhc      = ", th%e_nhc
   end if
   
-end subroutine get_nhc_ke
+end subroutine get_nhc_energy
 
 ! Debugging routine: dump the state of the thermostat
 subroutine dump_thermo_state(th, step, funit)
@@ -570,6 +614,8 @@ subroutine init_barostat(baro, inp, ndof, ke_atoms, init_cell)
   integer       :: i
   real(double)  :: m_box
 
+  if (baro%iprint > 1) write(*,'(2x,a)') "init_barostat"
+
   baro%ndof = ndof
   baro%ke_atoms = ke_atoms
   baro%iprint = inp%iprint
@@ -590,14 +636,24 @@ subroutine init_barostat(baro, inp, ndof, ke_atoms, init_cell)
 
   ! initialise MTTK
   baro%v_h = zero
+  baro%v_Q = zero
   baro%m_box = inp%box_mass
   baro%ke_box = zero
   baro%ident = zero
   do i=1,3
     baro%ident(i,i) = one
+    baro%Q(i) = baro%h(i,i)
   end do
   baro%stress_ext  = baro%ident*baro%P_ext
   baro%onfm = (one/baro%ndof)*baro%ident
+
+  write(*,'(a)') "Initialising barostat:"
+  write(*,'(2x,"barostat type                 ",a20)') baro%baro_type
+  write(*,'(2x,"barostat coupling time        ",f20.6)') baro%tau_P
+  if (baro%baro_type == 'mttk') then
+    write(*,'(2x,"box mass                      ",f20.6)') baro%m_box
+  end if
+  write(*,*)
 
 end subroutine init_barostat
 
@@ -666,6 +722,9 @@ subroutine update_G_box(baro, total_ke)
   class(type_barostat), intent(inout)       :: baro
   real(double), intent(in)                  :: total_ke
 
+  ! local variables
+  integer                                   :: i
+
   if (baro%iprint > 1) write(*,'(6x,a)') "MTTK: updating box force"
 
   select case(baro%baro_type)
@@ -676,6 +735,12 @@ subroutine update_G_box(baro, total_ke)
       write(*,'(6x,a,f12.6)') "G_eps = ", baro%G_eps
     end if
   case('ortho-mttk')
+    do i=1,3
+      baro%G_Q(i) = two*total_ke/baro%ndof/baro%Q(i) - baro%V*(baro%stress(i,i) - baro%stress_ext(i,i))/baro%m_box
+    end do
+    if (baro%iprint > 1) then
+      write(*,'(6x,a,3f12.6)') "G_Q   = ", baro%G_Q(:)
+    end if
   case('mttk')
     baro%G_h = (baro%ident*total_ke/baro%ndof + &
                 baro%V*(baro%stress - baro%ident*baro%stress_ext))/baro%m_box
@@ -777,7 +842,7 @@ subroutine propagate_r_ions(baro, dt, dtfac, v, r)
   integer                                     :: i, j
   real(double)                                :: sinhx_x, rscale, vscale, &
                                                  exp_v_eps, eps
-  real(double), dimension(3)                  :: vp
+  real(double), dimension(3)                  :: vp, vec_exp, vec_exp_sq
   real(double), dimension(3,3)                :: rfac_m, vfac_m
 
   select case(baro%baro_type)
@@ -788,6 +853,15 @@ subroutine propagate_r_ions(baro, dt, dtfac, v, r)
     vscale = exp_v_eps*sinhx_x*dt
     r = r*rscale + v*vscale
   case('ortho-mttk')
+    call baro%propagate_Q_lin(dt, half)
+    do i=1,3
+      vec_exp = exp(dt*half*baro%v_Q(i)/baro%Q(i))
+      vec_exp_sq(i) = vec_exp(i)**2
+    end do
+    do i=1,baro%nat
+      r(i,:) = vec_exp*r(i,:) + vec_exp_sq*v(i,:)
+    end do
+    call baro%propagate_Q_lin(dt, half)
   case('mttk')
     rfac_m = matmul(baro%c_g, baro%I_e)
     vfac_m = matmul(baro%c_g, baro%I_s)
@@ -813,14 +887,21 @@ subroutine propagate_v_ions(baro, dt, dtfac, v_eta_1, v)
   ! local variables
   integer                                     :: i
   real(double)                                :: vfac
+  real(double), dimension(3)                  :: vfac_v
   real(double), dimension(3,3)                :: vfac_m
 
   select case(baro%baro_type)
   case('iso-mttk')
     vfac = exp(-dtfac*dt*(v_eta_1 + baro%odnf*baro%v_eps))
     v = v*vfac
-    baro%ke_atoms = baro%ke_atoms*vfac**2
+    ! baro%ke_atoms = baro%ke_atoms*vfac**2
   case('ortho-mttk')
+    do i=1,3
+      vfac_v(i) = exp(-dt*dtfac*baro%v_Q(i)/baro%Q(i) + v_eta_1)
+    end do
+    do i=1,baro%nat
+      v(i,:) = v(i,:)*vfac_v
+    end do
   case('mttk')
     vfac_m = matmul(baro%c_g, baro%I_e)
     vfac_m = matmul(vfac_m, transpose(baro%c_g))
@@ -834,10 +915,11 @@ subroutine propagate_v_ions(baro, dt, dtfac, v_eta_1, v)
 
 end subroutine propagate_v_ions
 
-subroutine propagate_box(baro, h, V)
+subroutine propagate_box(baro, dt, dtfac, h, V)
 
   ! Passed variables
   class(type_barostat), intent(inout)         :: baro
+  real(double), intent(in)                    :: dt, dtfac
   real(double), dimension(3,3), intent(inout) :: h
   real(double), intent(inout)                 :: V
 
@@ -848,6 +930,7 @@ subroutine propagate_box(baro, h, V)
 
   select case(baro%baro_type)
   case('iso-mttk')
+    call baro%propagate_eps_lin(dt, dtfac)
     V_old = baro%V
     V_new = exp(three*baro%eps)*baro%V_ref
     hscale = (V_new/V_old)**third
@@ -857,6 +940,10 @@ subroutine propagate_box(baro, h, V)
     V = baro%V
     h = baro%h
   case('ortho-mttk')
+    do i=1,3
+      baro%h(i,i) = baro%Q(i)
+      h(i,i) = baro%Q(i)
+    end do
   case('mttk')
     baro%h = transpose(baro%h)
     htemp = matmul(baro%h, baro%c_g)
@@ -1005,7 +1092,7 @@ subroutine get_stress_and_pressure(baro)
 end subroutine get_stress_and_pressure
 
 ! linear shift in box velocity
-subroutine propagate_v_h_1(baro, dt, dtfac)
+subroutine propagate_v_h_lin(baro, dt, dtfac)
 
   ! Passed variables
   class(type_barostat), intent(inout)      :: baro
@@ -1014,10 +1101,10 @@ subroutine propagate_v_h_1(baro, dt, dtfac)
   if (baro%iprint > 1) write(*,'(6x,a)') "MTTK: propagating v_h linear shift"
   baro%v_h = baro%v_h + dtfac*dt*baro%G_h
 
-end subroutine propagate_v_h_1
+end subroutine propagate_v_h_lin
 
 ! exponential shift in box velocity from thermostat coupling
-subroutine propagate_v_h_2(baro, dt, dtfac, v_eta)
+subroutine propagate_v_h_exp(baro, dt, dtfac, v_eta)
 
   ! Passed variables
   class(type_barostat), intent(inout)      :: baro
@@ -1026,7 +1113,7 @@ subroutine propagate_v_h_2(baro, dt, dtfac, v_eta)
   if (baro%iprint > 1) write(*,'(6x,a)') "MTTK: propagating v_h exp factor"
   baro%v_h = baro%v_h*exp(-dtfac*dt*v_eta)
 
-end subroutine propagate_v_h_2
+end subroutine propagate_v_h_exp
 
 ! Update the box
 subroutine propagate_h(baro, dt, dtfac, h)
@@ -1060,13 +1147,15 @@ subroutine propagate_h(baro, dt, dtfac, h)
 end subroutine propagate_h
 
 ! Integrate the thermostat and barostat
-subroutine propagate_npt_mttk(baro, th, dt, ke_atoms, v)
+subroutine propagate_npt_mttk(baro, th, dt, m, v, ke_atoms)
 
   ! Passed variables
   class(type_barostat), intent(inout)         :: baro
   class(type_thermostat), intent(inout)       :: th
-  real(double), intent(in)                    :: dt, ke_atoms
+  real(double), intent(in)                    :: dt
+  real(double), dimension(:), intent(in)      :: m
   real(double), dimension(:,:), intent(inout) :: v
+  real(double), intent(inout)                 :: ke_atoms
 
   ! Local variables
   integer                                    :: i_ys, i_mts, i_nhc, i_atom
@@ -1075,9 +1164,10 @@ subroutine propagate_npt_mttk(baro, th, dt, ke_atoms, v)
   if (baro%iprint > 1) write(*,'(4x,a)') "MTTK: integrating thermo/barostat"
 
   v_sfac = one
+  baro%ke_atoms = ke_atoms
   call baro%get_box_ke
   call th%update_G_nhc(1, baro%ke_box)
-  call baro%update_G_box(ke_atoms)
+  call baro%update_G_box(baro%ke_atoms)
 
   do i_mts=1,th%n_mts ! Multiple time step loop
     do i_ys=1,th%n_ys ! Yoshida-Suzuki loop
@@ -1101,16 +1191,23 @@ subroutine propagate_npt_mttk(baro, th, dt, ke_atoms, v)
         call baro%propagate_v_eps_lin(th%dt_ys(i_ys), quarter)
         call baro%propagate_v_eps_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
       case('ortho-mttk')
+        call baro%propagate_v_Q_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
+        call baro%propagate_v_Q_lin(th%dt_ys(i_ys), quarter)
+        call baro%propagate_v_Q_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
       case('mttk')
+        call baro%propagate_v_h_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
+        call baro%propagate_v_h_lin(th%dt_ys(i_ys), quarter)
+        call baro%propagate_v_h_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
       end select
 
       ! propagate atomic velocities
       call baro%propagate_v_ions(th%dt_ys(i_ys), half, v_eta_couple, v)
+      call baro%update_ke_atoms(m, v)
       th%ke_atoms = baro%ke_atoms
 
       if (baro%baro_type == 'iso-mttk' .or. baro%baro_type == 'ortho-mttk' &
           .or. baro%baro_type == 'mttk') then
-        call baro%update_G_box(ke_atoms)
+        call baro%update_G_box(baro%ke_atoms)
       end if
 
       ! Propagate thermostat positions
@@ -1130,9 +1227,14 @@ subroutine propagate_npt_mttk(baro, th, dt, ke_atoms, v)
         call baro%propagate_v_eps_lin(th%dt_ys(i_ys), quarter)
         call baro%propagate_v_eps_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
       case('ortho-mttk')
+        call baro%propagate_v_Q_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
+        call baro%propagate_v_Q_lin(th%dt_ys(i_ys), quarter)
+        call baro%propagate_v_Q_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
       case('mttk')
+        call baro%propagate_v_h_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
+        call baro%propagate_v_h_lin(th%dt_ys(i_ys), quarter)
+        call baro%propagate_v_h_exp(th%dt_ys(i_ys), eighth, v_eta_couple)
       end select
-      call baro%propagate_v_ions(th%dt_ys(i_ys), half, th%v_eta(1), v)
 
       call baro%get_box_ke
       call th%update_G_nhc(1, baro%ke_box)
@@ -1146,9 +1248,32 @@ subroutine propagate_npt_mttk(baro, th, dt, ke_atoms, v)
       call th%propagate_v_eta_lin(th%n_nhc, th%dt_ys(i_ys), quarter)
     end do ! Yoshida-Suzuki loop
   end do ! Multiple time step loop
-
+  th%ke_atoms = baro%ke_atoms
+  ke_atoms = baro%ke_atoms
 
 end subroutine propagate_npt_mttk
+
+subroutine update_ke_atoms(baro, m, v)
+
+  ! Passed variables
+  class(type_barostat), intent(inout)       :: baro
+  real(double), dimension(:), intent(in)    :: m
+  real(double), dimension(:,:), intent(in)  :: v
+
+  ! local variables
+  integer                                   :: i
+
+  if (baro%iprint > 1) write(*,'(6x,a)') "MTTK: update atom kinetic energy"
+
+  baro%ke_atoms = zero
+  do i=1,baro%nat
+    baro%ke_atoms = baro%ke_atoms + m(i)*sum(v(i,:)**2)
+  end do
+  baro%ke_atoms = baro%ke_atoms*half
+
+  if (baro%iprint > 1) write(*,'(6x,"ke_atoms = ",e20.10)') baro%ke_atoms
+
+end subroutine update_ke_atoms
 
 ! Debugging routine: dump the state of the barostat
 subroutine dump_baro_state(baro, step, funit)
@@ -1182,6 +1307,10 @@ subroutine dump_baro_state(baro, step, funit)
     write(funit,'("ke_box:",e16.4)') baro%ke_box
     write(funit,'("G_eps: ",e16.4)') baro%G_eps
   case('ortho-mttk')
+    write(funit,'("Q:     ",3e16.4)') baro%Q
+    write(funit,'("v_Q:   ",3e16.4)') baro%v_Q
+    write(funit,'("ke_box:",3e16.4)') baro%ke_box
+    write(funit,'("G_Q:   ",3e16.4)') baro%G_Q
   case('mttk')
     write(funit,'(8x,a)') 'v_h'
     do i=1,3

@@ -29,12 +29,11 @@ call inp%read_input(inpfile)
 nsteps = inp%nsteps
 call pp%init_pp(inp%ppfile, inp%shift)
 call init_cell%read_cell(inp%sfile)
-init_cell%pbc_method = inp%pbc_method
+init_cell%pbc_method = 'mic'
 
 call mdr%init_md(inp, init_cell, pp)
 mdr%dump_freq = inp%dump_freq
 mdr%cp_freq = inp%cp_freq
-! end if
 
 ! Run the main MD loop
 call mdr%md_run(mdr%step,nsteps)

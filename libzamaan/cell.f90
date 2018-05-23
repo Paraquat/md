@@ -10,17 +10,16 @@ private
 public :: type_cell
 
 type type_cell
+  integer         :: iprint
   integer         :: nat
   integer         :: nspec
-  integer         :: nghost
-  integer         :: nat_ghost
   integer         :: depth
   real(double)    :: V
   character(40)   :: pbc_method
-  real(double), allocatable, dimension(:,:) :: r, rcart, dt, rghost
-  character(2), allocatable, dimension(:)   :: spec, species, species_ghost
-  integer, allocatable, dimension(:)        :: spec_count, spec_int, &
-                                               spec_ghost_int, ghost_label
+  real(double), allocatable, dimension(:,:) :: r, rcart, dt
+  real(double), allocatable, dimension(:,:,:) :: vt
+  character(2), allocatable, dimension(:)   :: spec, species
+  integer, allocatable, dimension(:)        :: spec_count, spec_int
   real(double), allocatable, dimension(:)   :: mass
   real(double), dimension(3,3)              :: h, h_inv
   real(double), dimension(6)                :: param
@@ -43,6 +42,7 @@ type type_cell
     procedure :: wrap_positions_cart
     procedure :: init
     procedure :: get_dt
+    procedure :: get_vt
     procedure :: read_xyz
     procedure :: read_shx
     procedure :: read_cell
@@ -56,8 +56,6 @@ type type_cell
     procedure :: supercell
     procedure :: cut_ortho
     procedure :: cut_frac
-    procedure :: init_ghost
-    procedure :: update_ghost_cells
 end type type_cell
 
 contains
@@ -321,6 +319,7 @@ subroutine cell_cart2frac(p)
 
   integer :: i
 
+  call p%invert_lat
   if (allocated(p%r) .eqv. .false.) allocate(p%r(p%nat,3))
 
   do i=1,p%nat
@@ -345,7 +344,8 @@ function mic(p, coord1, coord2) result(relative)
   end do
 end function mic
 
-! Fractional coordinates for PBC
+! Fractional coordinates for PBC, assume all atoms are already inside the 
+! unit cell
 function pbc_frac2cart(p, coord1, coord2) result(relative_cart)
 
   class(type_cell), intent(inout)         :: p
@@ -355,17 +355,13 @@ function pbc_frac2cart(p, coord1, coord2) result(relative_cart)
   integer                            :: i
 
   relative = coord2 - coord1
-  outer: do i=1,3
-    inner: do
-      if (relative(i) >= one) then
+  do i=1,3
+      if (relative(i) >= half) then
         relative(i) = relative(i) - one
-      else if (relative(i) < zero) then
+      else if (relative(i) <= -half) then
         relative(i) = relative(i) + one
-      else
-        exit inner
       end if
-    end do inner 
-  end do outer
+  end do 
   relative_cart = matmul(relative, p%h)
 
 end function pbc_frac2cart
@@ -421,7 +417,8 @@ subroutine get_dt(p)
   real(double), dimension(3)              :: r_ij, r_ij_cart
   real(double)                            :: d
 
-  p%dt=0.
+  if (.not. allocated(p%dt)) allocate(p%dt(p%nat,p%nat))
+  p%dt=zero
 
   do iat=1,p%nat
     do jat=iat+1,p%nat
@@ -434,6 +431,33 @@ subroutine get_dt(p)
   end do
 
 end subroutine get_dt
+
+! get table of relative vectors
+subroutine get_vt(p)
+
+  class(type_cell), intent(inout)     :: p
+
+  integer                                 :: iat, jat
+  real(double), dimension(3)              :: r_ij, r_ij_cart
+  real(double)                            :: d
+
+  if (.not. allocated(p%vt)) allocate(p%vt(p%nat,p%nat,3))
+  if (.not. allocated(p%dt)) allocate(p%dt(p%nat,p%nat))
+  p%vt = zero
+  p%dt = zero
+
+  do iat=1,p%nat
+    do jat=iat+1,p%nat
+      r_ij = p%pbc_frac2cart(p%r(iat,:),p%r(jat,:))
+      p%vt(iat,jat,:) = r_ij_cart
+      p%vt(jat,iat,:) = -r_ij_cart
+      d= sqrt(sum(r_ij_cart**2))
+      p%dt(iat,jat) = d
+      p%dt(jat,iat) = d
+    end do
+  end do
+
+end subroutine get_vt
 
 ! read xyz file (cell parameters in the comment line)
 subroutine read_xyz(p, infilename)
@@ -502,7 +526,7 @@ subroutine read_cell(p, infilename)
     else if (reason < 0) then
       exit outer1
     else
-      if (line(1:19) .eq. "%BLOCK lattice_cart") then
+      if (trim(adjustl(line)) .eq. "%BLOCK lattice_cart") then
         inner1: do i = 1,3
           read(101,*) p%h(i,:)
         end do inner1
@@ -521,11 +545,11 @@ subroutine read_cell(p, infilename)
     else if (reason < 0) then
       exit outer2
     else
-      if (line(1:21) .eq. "%BLOCK positions_frac") then
+      if (trim(adjustl(line)) .eq. "%BLOCK positions_frac") then
         if (p%nat .eq. 0) then
           inner2: do
             read(101,'(a)') line
-            if (line(1:24) .eq. "%ENDBLOCK positions_frac") then
+            if (trim(adjustl(line)) .eq. "%ENDBLOCK positions_frac") then
               rewind(unit=101)
               exit inner2
             else
@@ -542,7 +566,6 @@ subroutine read_cell(p, infilename)
     end if
   end do outer2
 
-
   call p%cell_frac2cart
   call p%count_species
   call p%int_label_species
@@ -558,7 +581,7 @@ subroutine read_cell(p, infilename)
     else if (reason < 0) then
       exit outer3
     else
-      if (trim(line(1:19)) .eq. "%BLOCK species_mass") then
+      if (trim(adjustl(line)) .eq. "%BLOCK species_mass") then
         inner3: do i=1,p%nspec
           read(101,*) s, m
           do j=1,p%nspec
@@ -716,21 +739,27 @@ subroutine write_cell(p, filename)
 
   class(type_cell), intent(inout)   :: p
 
-  character(40)                       :: filename
+  character(*)                        :: filename
   integer                             :: i
 
   open(101, file=filename, status='replace')
-  write(101,*) "%BLOCK lattice_abc"
+  write(101,'(a)') "%BLOCK lattice_cart"
   write(101,*) p%h(1,:)
   write(101,*) p%h(2,:)
   write(101,*) p%h(3,:)
-  write(101,*) "%ENDBLOCK lattice_abc"
+  write(101,'(a)') "%ENDBLOCK lattice_cart"
   write(101,*)
-  write(101,*) "%BLOCK positions_frac"
-  do i = 1, p%nat
+  write(101,'(a)') "%BLOCK species_mass"
+  do i=1,p%nspec
+    write(101,*) p%spec(i), p%mass(i)
+  end do
+  write(101,'(a)') "%ENDBLOCK species_mass"
+  write(101,*)
+  write(101,'(a)') "%BLOCK positions_frac"
+  do i =1,p%nat
     write(101,*) p%species(i), p%r(i,:)
   end do
-  write(101,*) "%ENDBLOCK positions_frac"
+  write(101,'(a)') "%ENDBLOCK positions_frac"
   close(101)
 end subroutine write_cell
 
@@ -866,61 +895,5 @@ subroutine cut_frac(p, cutoff)
   cutoff = min(la, lb, lc)
 
 end subroutine cut_frac
-
-subroutine init_ghost(p, depth)
-
-  ! passed variables
-  class(type_cell), intent(inout)   :: p
-  integer, intent(in)               :: depth
-
-  ! local variables
-  integer                           :: i, j, n
-
-  p%depth = depth
-  p%pbc_method = 'ghost'
-  p%nghost = (2*depth + 1)**3
-  p%nat_ghost = p%nghost*p%nat
-  allocate(p%rghost(p%nat_ghost,3), p%species_ghost(p%nat_ghost), &
-           p%spec_ghost_int(p%nat_ghost), p%ghost_label(p%nat_ghost))
-
-  n = 1
-  do i=1,p%nghost
-    do j=1,p%nat
-      p%species_ghost(n) = p%species(j)
-      p%spec_ghost_int(n) = p%spec_int(j)
-      p%ghost_label(n) = j
-      n = n + 1
-    end do
-  end do
-
-end subroutine init_ghost
-
-! Generate ghost cells for pbc distance calculation
-subroutine update_ghost_cells(p)
-
-  ! passed variables
-  class(type_cell), intent(inout)   :: p
-
-  ! local variables
-  integer                           :: a, i, j, k, n
-  real(double), dimension(3)        :: rfrac, trans
-
-  call p%invert_lat
-  call p%cell_cart2frac
-  n = 1
-  do i=-p%depth,p%depth
-    do j=-p%depth,p%depth
-      do k=-p%depth,p%depth
-        trans = (/real(i, double), real(j, double), real(k, double)/)
-        do a=1,p%nat
-          rfrac = p%r(a,:) + trans
-          p%rghost(n,:) = matmul(rfrac, p%h)
-          n = n+1
-        end do
-      end do
-    end do
-  end do
-
-end subroutine update_ghost_cells
 
 end module cell

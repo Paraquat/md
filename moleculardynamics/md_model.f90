@@ -251,12 +251,12 @@ contains
       if (mdl%thermo_type == 'nhc') then
         write(iunit,'(i10,9e16.6)') step, mdl%E_p, mdl%E_k, mdl%E_nhc, &
                                     mdl%E_box, mdl%pV, mdl%H_prime, &
-                                    mdl%T_int, mdl%P_int, mdl%V
+                                    mdl%T_int, mdl%P_int, mdl%vol
       end if
     case ('nph')
         write(iunit,'(i10,8e16.6)') step, mdl%E_p, mdl%E_k, mdl%E_box, &
                                     mdl%pV, mdl%H_prime, mdl%T_int, &
-                                    mdl%P_int, mdl%V
+                                    mdl%P_int, mdl%vol
     end select
 
   end subroutine stat_dump

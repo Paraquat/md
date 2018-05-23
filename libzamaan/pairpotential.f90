@@ -21,21 +21,29 @@ type type_pairpotential
   real(double), allocatable, dimension(:,:)  :: s6,s12,c_f,c_e
   ! Morse variables
   real(double), allocatable, dimension(:,:)  :: exp_re, exp_re2
+  ! Stillinger-Weber variables
+  real(double) :: A, B, p, q, lambda, gamma, swsigma, sweps, swcut, cos_th_ref
 
   contains
-    procedure :: read_pp_file
-    procedure :: init_pp
-    procedure :: init_lj
-    procedure :: init_morse
-    procedure :: pp_energy
-    procedure :: pp_force
-    procedure :: pp_force_and_energy
-    procedure :: lj_energy
-    procedure :: lj_force
-    procedure :: lj_force_and_energy
-    procedure :: morse_energy
-    procedure :: morse_force
-    procedure :: morse_force_and_energy
+    procedure, public  :: read_pp_file
+    procedure, public  :: init_pp
+    procedure, public  :: init_lj
+    procedure, public  :: init_morse
+    procedure, public  :: init_sw
+    procedure, public  :: pp_energy
+    procedure, public  :: pp_force
+    procedure, public  :: pp_force_and_energy
+    procedure, public  :: lj_energy
+    procedure, public  :: lj_force
+    procedure, public  :: lj_force_and_energy
+    procedure, public  :: morse_energy
+    procedure, public  :: morse_force
+    procedure, public  :: morse_force_and_energy
+    procedure, private :: sw_v2
+    procedure, private :: sw_f2
+    procedure, private :: sw_h
+    procedure, private :: sw_f3_e3
+    procedure, public  :: sw_force_and_energy
 end type type_pairpotential
 
 contains
@@ -99,6 +107,19 @@ contains
       do i=1,pp%ns
         read(funit,*) pp%r_e(i,:)
       end do
+    case ('stillinger-weber')
+      read(funit,*) junk
+      read(funit,*) pp%A
+      read(funit,*) junk
+      read(funit,*) pp%B
+      read(funit,*) junk
+      read(funit,*) pp%p
+      read(funit,*) junk
+      read(funit,*) pp%q
+      read(funit,*) junk
+      read(funit,*) pp%lambda
+      read(funit,*) junk
+      read(funit,*) pp%gamma
     end select
 
     close(funit)
@@ -107,18 +128,49 @@ contains
 
   subroutine init_pp(pp, filename, shift)
 
+    ! passed variables
     class(type_pairpotential), intent(inout)  :: pp
     character(40), intent(in)                 :: filename
     logical, intent(in)                       :: shift
 
+    ! local variables
+    integer                                   :: i
+
+    write(*,'(a)') "Initialising pair potential"
+
     call pp%read_pp_file(filename)
 
+    write(*,'("Pair potential type    ",a)') pp%potential_type
+    write(*,'("Pair potential cutoff  ",f8.4)') pp%r_cut
+    write(*,'(2x,a)') "Sigma"
+    do i=1,pp%ns
+      write(*,'(4x,3f10.6)') pp%sigma(i,:)
+    end do
+    write(*,'(a)') "Epsilon"
+    do i=1,pp%ns
+      write(*,'(4x,3f10.6)') pp%epsilon(i,:)
+    end do
     select case (pp%potential_type)
     case ("lennard-jones")
       call pp%init_lj(shift)
+      write(*,'("Pair potential shift   ",l8)') shift
     case ("morse")
       call pp%init_morse(shift)
+      write(*,'("Pair potential shift   ",l8)') shift
+      write(*,'(2x,a)') "r_e"
+      do i=1,pp%ns
+        write(*,'(4x,3f10.6)') pp%r_e(i,:)
+      end do
+    case ('stillinger-weber')
+      call pp%init_sw()
+      write(*,'("A                      ",f8.4)') pp%A
+      write(*,'("B                      ",f8.4)') pp%B
+      write(*,'("p                      ",f8.4)') pp%p
+      write(*,'("q                      ",f8.4)') pp%q
+      write(*,'("lambda                 ",f8.4)') pp%lambda
+      write(*,'("gamma                  ",f8.4)') pp%gamma
     end select
+    write(*,*)
 
   end subroutine init_pp
 
@@ -398,5 +450,208 @@ contains
       e = e - mo%e_shift(s_i,s_j)
     end if
   end subroutine morse_force_and_energy
+
+  ! Stillinger-Weber energy
+  function sw_energy(sw, r_ij, s_i, s_j, shift) result(e)
+
+    ! passed variables
+    class(type_pairpotential), intent(in)  :: sw
+
+    real(double), intent(in)    :: r_ij
+    integer, intent(in)         :: s_i, s_j
+    logical, intent(in)         :: shift
+    real(double)                :: e
+
+    ! local variables
+
+  end function sw_energy
+
+  ! Initialise Stillinger-Weber parameters
+  subroutine init_sw(sw)
+
+    ! passed variables
+    class(type_pairpotential), intent(inout) :: sw
+
+    sw%swsigma = sw%sigma(1,1)
+    sw%sweps = sw%epsilon(1,1)
+    sw%swcut = sw%r_cut(1,1)
+    sw%cos_th_ref = -third
+
+  end subroutine init_sw
+
+  ! Stillinger-Weber 2-body potential energy
+  function sw_v2(sw, rij, rijainv) result(v2)
+
+    ! passed variables
+    class(type_pairpotential), intent(in)  :: sw
+
+    real(double), intent(in)    :: rij, rijainv
+    real(double)                :: v2
+
+    if (rij < sw%swcut) then
+      v2 = sw%sweps*sw%A*(sw%B*rij**(-sw%p) - rij**(-sw%q))*exp(rijainv)
+    else
+      v2 = zero
+    end if
+
+  end function sw_v2
+
+  ! Stillinger-Weber 2-body force
+  function sw_f2(sw, rij, modrij, rijinv, rijainv, v2) result(f2)
+
+    ! passed variables
+    class(type_pairpotential), intent(in)   :: sw
+
+    real(double), dimension(3), intent(in)  :: rij
+    real(double), intent(in)                :: modrij, rijinv, rijainv, v2
+    real(double), dimension(3)              :: f2
+
+    if (modrij < sw%swcut) then
+      f2 = v2*rij*rijinv*((sw%p*sw%B*modrij**(-sw%p-1) - &
+                          sw%q*modrij**(-sw%q-1))/(sw%B*modrij**(-sw%p) - &
+                          modrij**(-sw%q)) + rijainv**2)
+    else
+      f2 = zero
+    end if
+
+  end function sw_f2
+
+  ! Stillinger-Weber three-body energy component
+  function sw_h(sw, rinv1, rinv2, cos_th) result(h)
+
+    ! passed variables
+    class(type_pairpotential), intent(in)   :: sw
+    real(double), intent(in)                :: rinv1, rinv2, cos_th
+    real(double)                            :: h
+
+    h = sw%sweps*sw%lambda*exp(sw%gamma*rinv1 + sw%gamma*rinv2) * &
+        (cos_th-sw%cos_th_ref)**2
+
+  end function sw_h
+
+  ! Stillinger-Weber three-body force and energy
+  subroutine sw_f3_e3(sw, rij, rjk, rik, rijinv, modrij, modrjk, modrik, &
+                      rjkinv, rikinv, rijainv, rjkainv, rikainv, &
+                      fi, fj, fk, h_jik, h_ijk, h_ikj)
+    ! passed varialbes
+    class(type_pairpotential), intent(in)   :: sw
+    real(double), dimension(3), intent(in)  :: rij, rjk, rik
+    real(double), intent(in)                :: modrij, modrjk, modrik, &
+                                               rijinv, rjkinv, rikinv, &
+                                               rijainv, rjkainv, rikainv
+    real(double), dimension(3), intent(out) :: fi, fj, fk
+    real(double), intent(out)               :: h_jik, h_ijk, h_ikj
+
+    ! local variables
+    real(double)                            :: cos_th_jik, cos_th_ijk, &
+                                               cos_th_ikj
+
+    ! jik permutation
+    if ((modrij < sw%swcut) .and. (modrik < sw%swcut)) then
+      cos_th_jik = dot_product(rij, rik)*rijinv*rikinv
+      h_jik = sw%sw_h(rijainv, rikainv, cos_th_jik)
+      fi = -sw%gamma*h_jik*(rij*rijinv*rijainv**2 + rik*rikinv*rikainv**2) + &
+           two*sw%lambda*exp(sw%gamma*(rijainv + rikainv)) * &
+           (cos_th_jik - sw%cos_th_ref) * &
+           (rij*rijinv*rikinv + rik*rikinv*rijinv -  &
+           (rij*rijinv*rikinv + rik*rikinv*rijinv)*cos_th_jik)
+    else
+      h_jik = zero
+      fi = zero
+    end if
+
+    ! ijk permutation
+    if ((modrij < sw%swcut) .and. (modrjk < sw%swcut)) then
+      cos_th_ijk = dot_product(rij, rjk)*rijinv*rjkinv
+      h_ijk = sw%sw_h(rijainv, rjkainv, cos_th_ijk)
+      fj = -sw%gamma*h_ijk*(rij*rijinv*rijainv**2) + &
+           two*sw%lambda*exp(sw%gamma*(rijainv + rjkainv)) * &
+           (cos_th_ijk - sw%cos_th_ref) * &
+           (-rjk*rjkinv*rijinv + rij*rijinv*rijinv*cos_th_ijk)
+    else
+      h_ijk = zero
+      fj = zero
+    end if
+
+    ! ikj permutation
+    if ((modrik < sw%swcut) .and. (modrjk < sw%swcut)) then
+      cos_th_ikj = dot_product(rik, rjk)*rikinv*rjkinv
+      h_ikj = sw%sw_h(rikainv, rjkainv, cos_th_ikj)
+      fk = -sw%gamma*h_ikj*(rik*rikinv*rikainv**2) + &
+           two*sw%lambda*exp(sw%gamma*(rikainv + rjkainv)) * &
+           (cos_th_ikj - sw%cos_th_ref) * &
+           (-rjk*rjkinv*rikinv + rik*rikinv*rikinv*cos_th_ikj)
+    else
+      h_ikj = zero
+      fk = zero
+    end if
+
+  end subroutine sw_f3_e3
+
+
+  ! Stillinger-Weber force and energy
+  subroutine sw_force_and_energy(sw, rij, rik, rjk, ij_sw, jk_sw, ik_sw, &
+                                 fi, fj, fk, v)
+
+    ! passed variables
+    class(type_pairpotential), intent(in)   :: sw
+    real(double), dimension(3), intent(in)  :: rij, rjk, rik
+    real(double), dimension(3), intent(out) :: fi, fj, fk
+    real(double)                            :: v
+    logical                                 :: ij_sw, jk_sw, ik_sw
+
+    ! local variables
+    real(double), dimension(3)              :: f3i, f3j, f3k, f2ij, f2jk, f2ik
+    real(double)                            :: modrij, modrjk, modrik, &
+                                               rijinv, rijainv, rjkinv, &
+                                               rjkainv, rikinv, rikainv, &
+                                               hjik, hijk, hikj, &
+                                               v2ij, v2jk, v2ik, &
+                                               cos_th_jik, cos_th_ijk, &
+                                               cos_th_ikj
+
+    v = zero
+    fi = zero
+    fj = zero
+    fk = zero
+
+    modrij = sqrt(sum(rij**2))
+    modrjk = sqrt(sum(rjk**2))
+    modrik = sqrt(sum(rik**2))
+    if (modrij < sw%swcut) then
+      rijinv = one/modrij
+      rijainv = one/(modrij-sw%swcut)
+      if (ij_sw) then
+        v2ij = sw%sw_v2(modrij, rijainv)
+        f2ij = sw%sw_f2(rij, modrij, rijinv, rijainv, v2ij)
+      end if
+    end if
+    if (modrjk < sw%swcut) then
+      rjkinv = one/modrjk
+      rjkainv = one/(modrjk-sw%swcut)
+      if (jk_sw) then
+        v2jk = sw%sw_v2(modrjk, rjkainv)
+        f2jk = sw%sw_f2(rjk, modrjk, rjkinv, rjkainv, v2jk)
+      end if
+    end if
+    if (modrik < sw%swcut) then
+      rikinv = one/modrik
+      rikainv = one/(modrik-sw%swcut)
+      if (ik_sw) then
+        v2ik = sw%sw_v2(modrik, rikainv)
+        f2ik = sw%sw_f2(rik, modrik, rikinv, rikainv, v2ik)
+      end if
+    end if
+
+    call sw%sw_f3_e3(rij, rjk, rik, rijinv, modrij, modrjk, modrik, &
+                     rjkinv, rikinv, rijainv, rjkainv, rikainv, &
+                     f3i, f3j, f3k, hjik, hijk, hikj)
+
+    fi = fi + f2ij + f2ik + f3i
+    fj = fj - f2ij + f2jk + f3j
+    fk = fk - f2ik - f2jk + f3k
+    v = v + v2ij + v2jk + v2ik + hjik + hijk + hikj
+
+  end subroutine sw_force_and_energy
 
 end module pairpotential
