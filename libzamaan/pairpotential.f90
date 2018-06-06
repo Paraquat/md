@@ -10,7 +10,8 @@ public :: type_pairpotential
 
 type type_pairpotential
   character(40) :: potential_type
-  integer       :: ns
+  integer       :: ns, npair, ntriple
+  logical       :: threebody
   real(double), allocatable, dimension(:,:)  :: r_cut
   character(2), allocatable, dimension(:)    :: species_label
   real(double), allocatable, dimension(:,:)  :: sigma
@@ -39,10 +40,11 @@ type type_pairpotential
     procedure, public  :: morse_energy
     procedure, public  :: morse_force
     procedure, public  :: morse_force_and_energy
-    procedure, private :: sw_v2
-    procedure, private :: sw_f2
-    procedure, private :: sw_h
-    procedure, private :: sw_f3_e3
+    procedure, public  :: sw_v2
+    procedure, public  :: sw_f2
+    procedure, public  :: sw_2body_force_and_energy
+    procedure, public  :: sw_h
+    procedure, public  :: sw_3body_force_and_energy
     procedure, public  :: sw_force_and_energy
 end type type_pairpotential
 
@@ -162,7 +164,7 @@ contains
         write(*,'(4x,3f10.6)') pp%r_e(i,:)
       end do
     case ('stillinger-weber')
-      call pp%init_sw()
+      call pp%init_sw
       write(*,'("A                      ",f8.4)') pp%A
       write(*,'("B                      ",f8.4)') pp%B
       write(*,'("p                      ",f8.4)') pp%p
@@ -237,7 +239,7 @@ contains
   function pp_energy(pp, r_ij, s_i, s_j, shift) result(e)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: pp
+    class(type_pairpotential), intent(inout) :: pp
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
@@ -258,7 +260,7 @@ contains
   function pp_force(pp, r_ij, s_i, s_j, shift) result(f)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: pp
+    class(type_pairpotential), intent(inout) :: pp
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
@@ -279,7 +281,7 @@ contains
   subroutine pp_force_and_energy(pp, r_ij, s_i, s_j, shift, f, e)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: pp
+    class(type_pairpotential), intent(inout) :: pp
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
     logical, intent(in)         :: shift
@@ -300,7 +302,7 @@ contains
   function lj_energy(lj, r_ij, s_i, s_j, shift) result(e)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: lj
+    class(type_pairpotential), intent(inout) :: lj
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
@@ -325,7 +327,7 @@ contains
   function lj_force(lj, r_ij, s_i, s_j, shift) result(f)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: lj
+    class(type_pairpotential), intent(inout) :: lj
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
@@ -349,7 +351,7 @@ contains
   subroutine lj_force_and_energy(lj, r_ij, s_i, s_j, shift, f, e)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: lj
+    class(type_pairpotential), intent(inout) :: lj
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
     logical, intent(in)         :: shift
@@ -376,7 +378,7 @@ contains
   function morse_energy(mo, r_ij, s_i, s_j, shift) result(e)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: mo
+    class(type_pairpotential), intent(inout) :: mo
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
@@ -403,7 +405,7 @@ contains
   function morse_force(mo, r_ij, s_i, s_j, shift) result(f)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: mo
+    class(type_pairpotential), intent(inout) :: mo
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
@@ -428,7 +430,7 @@ contains
   subroutine morse_force_and_energy(mo, r_ij, s_i, s_j, shift, f, e)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: mo
+    class(type_pairpotential), intent(inout) :: mo
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
     logical, intent(in)         :: shift
@@ -451,21 +453,6 @@ contains
     end if
   end subroutine morse_force_and_energy
 
-  ! Stillinger-Weber energy
-  function sw_energy(sw, r_ij, s_i, s_j, shift) result(e)
-
-    ! passed variables
-    class(type_pairpotential), intent(in)  :: sw
-
-    real(double), intent(in)    :: r_ij
-    integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
-    real(double)                :: e
-
-    ! local variables
-
-  end function sw_energy
-
   ! Initialise Stillinger-Weber parameters
   subroutine init_sw(sw)
 
@@ -476,6 +463,9 @@ contains
     sw%sweps = sw%epsilon(1,1)
     sw%swcut = sw%r_cut(1,1)
     sw%cos_th_ref = -third
+    sw%npair = 0
+    sw%ntriple = 0
+    sw%threebody = .true.
 
   end subroutine init_sw
 
@@ -483,15 +473,13 @@ contains
   function sw_v2(sw, rij, rijainv) result(v2)
 
     ! passed variables
-    class(type_pairpotential), intent(in)  :: sw
+    class(type_pairpotential), intent(inout) :: sw
 
     real(double), intent(in)    :: rij, rijainv
     real(double)                :: v2
 
     if (rij < sw%swcut) then
       v2 = sw%sweps*sw%A*(sw%B*rij**(-sw%p) - rij**(-sw%q))*exp(rijainv)
-    else
-      v2 = zero
     end if
 
   end function sw_v2
@@ -500,27 +488,54 @@ contains
   function sw_f2(sw, rij, modrij, rijinv, rijainv, v2) result(f2)
 
     ! passed variables
-    class(type_pairpotential), intent(in)   :: sw
+    class(type_pairpotential), intent(inout) :: sw
 
-    real(double), dimension(3), intent(in)  :: rij
-    real(double), intent(in)                :: modrij, rijinv, rijainv, v2
-    real(double), dimension(3)              :: f2
+    real(double), dimension(3), intent(in)   :: rij
+    real(double), intent(in)                 :: modrij, rijinv, rijainv, v2
+    real(double), dimension(3)               :: f2
 
+    sw%npair = sw%npair + 1
     if (modrij < sw%swcut) then
-      f2 = v2*rij*rijinv*((sw%p*sw%B*modrij**(-sw%p-1) - &
-                          sw%q*modrij**(-sw%q-1))/(sw%B*modrij**(-sw%p) - &
+      f2 = -v2*rij*rijinv*(rijinv*(sw%p*sw%B*modrij**(-sw%p) - &
+                          sw%q*modrij**(-sw%q))/(sw%B*modrij**(-sw%p) - &
                           modrij**(-sw%q)) + rijainv**2)
-    else
-      f2 = zero
+      ! f2 = sw%A*(sw%B*sw%p*modrij**(-sw%p) - &
+        ! sw%q*modrij**(-sw%q))*rijinv*exp(rijainv) - &
+        ! rijainv**2*sw%A*(sw%B*modrij**(-sw%p) - &
+        ! modrij**(-sw%q))*exp(rijainv)
     end if
 
   end function sw_f2
+
+  subroutine sw_2body_force_and_energy(sw, rij, fij, vij)
+
+    ! passed variables
+    class(type_pairpotential), intent(inout) :: sw
+    real(double), intent(in), dimension(3)   :: rij
+    real(double), dimension(3), intent(out)  :: fij
+    real(double), intent(out)                :: vij
+
+    ! local variables
+    real(double)                             :: modrij, rijinv, rijainv
+
+    vij = zero
+    fij = zero
+
+    modrij = sqrt(sum(rij**2))
+    if (modrij < sw%swcut) then
+      rijinv = one/modrij
+      rijainv = one/(modrij-sw%swcut)
+      vij = sw%sw_v2(modrij, rijainv)
+      fij = sw%sw_f2(rij, modrij, rijinv, rijainv, vij)
+    end if
+
+  end subroutine sw_2body_force_and_energy
 
   ! Stillinger-Weber three-body energy component
   function sw_h(sw, rinv1, rinv2, cos_th) result(h)
 
     ! passed variables
-    class(type_pairpotential), intent(in)   :: sw
+    class(type_pairpotential), intent(inout)  :: sw
     real(double), intent(in)                :: rinv1, rinv2, cos_th
     real(double)                            :: h
 
@@ -530,21 +545,23 @@ contains
   end function sw_h
 
   ! Stillinger-Weber three-body force and energy
-  subroutine sw_f3_e3(sw, rij, rjk, rik, rijinv, modrij, modrjk, modrik, &
-                      rjkinv, rikinv, rijainv, rjkainv, rikainv, &
-                      fi, fj, fk, h_jik, h_ijk, h_ikj)
+  subroutine sw_3body_force_and_energy(sw, rij, rjk, rik, modrij, modrjk, &
+                      modrik, rijinv, rjkinv, rikinv, rijainv, rjkainv, &
+                      rikainv, fi, fj, fk, h_jik, h_ijk, h_ikj)
     ! passed varialbes
-    class(type_pairpotential), intent(in)   :: sw
-    real(double), dimension(3), intent(in)  :: rij, rjk, rik
-    real(double), intent(in)                :: modrij, modrjk, modrik, &
-                                               rijinv, rjkinv, rikinv, &
-                                               rijainv, rjkainv, rikainv
-    real(double), dimension(3), intent(out) :: fi, fj, fk
-    real(double), intent(out)               :: h_jik, h_ijk, h_ikj
-
+    class(type_pairpotential), intent(inout) :: sw
+    real(double), dimension(3), intent(in)   :: rij, rjk, rik
+    real(double), intent(in)                 :: modrij, modrjk, modrik, &
+                                                rijinv, rjkinv, rikinv, &
+                                                rijainv, rjkainv, rikainv
+    real(double), dimension(3), intent(out)  :: fi, fj, fk
+    real(double), intent(out)                :: h_jik, h_ijk, h_ikj
+ 
     ! local variables
-    real(double)                            :: cos_th_jik, cos_th_ijk, &
-                                               cos_th_ikj
+    real(double)                             :: cos_th_jik, cos_th_ijk, &
+                                                cos_th_ikj
+
+    sw%ntriple = sw%ntriple + 1
 
     ! jik permutation
     if ((modrij < sw%swcut) .and. (modrik < sw%swcut)) then
@@ -555,9 +572,6 @@ contains
            (cos_th_jik - sw%cos_th_ref) * &
            (rij*rijinv*rikinv + rik*rikinv*rijinv -  &
            (rij*rijinv*rikinv + rik*rikinv*rijinv)*cos_th_jik)
-    else
-      h_jik = zero
-      fi = zero
     end if
 
     ! ijk permutation
@@ -567,10 +581,7 @@ contains
       fj = -sw%gamma*h_ijk*(rij*rijinv*rijainv**2) + &
            two*sw%lambda*exp(sw%gamma*(rijainv + rjkainv)) * &
            (cos_th_ijk - sw%cos_th_ref) * &
-           (-rjk*rjkinv*rijinv + rij*rijinv*rijinv*cos_th_ijk)
-    else
-      h_ijk = zero
-      fj = zero
+           (rjk*rjkinv*rijinv + rij*rijinv*rijinv*cos_th_ijk)
     end if
 
     ! ikj permutation
@@ -581,28 +592,25 @@ contains
            two*sw%lambda*exp(sw%gamma*(rikainv + rjkainv)) * &
            (cos_th_ikj - sw%cos_th_ref) * &
            (-rjk*rjkinv*rikinv + rik*rikinv*rikinv*cos_th_ikj)
-    else
-      h_ikj = zero
-      fk = zero
     end if
 
-  end subroutine sw_f3_e3
+  end subroutine sw_3body_force_and_energy
 
 
   ! Stillinger-Weber force and energy
   subroutine sw_force_and_energy(sw, rij, rik, rjk, ij_sw, jk_sw, ik_sw, &
-                                 fi, fj, fk, v)
+                                 ijk_sw, fi, fj, fk, v)
 
     ! passed variables
-    class(type_pairpotential), intent(in)   :: sw
-    real(double), dimension(3), intent(in)  :: rij, rjk, rik
-    real(double), dimension(3), intent(out) :: fi, fj, fk
-    real(double)                            :: v
-    logical                                 :: ij_sw, jk_sw, ik_sw
+    class(type_pairpotential), intent(inout) :: sw
+    real(double), dimension(3), intent(in)   :: rij, rjk, rik
+    logical, intent(in)                      :: ij_sw, jk_sw, ik_sw, ijk_sw
+    real(double), dimension(3), intent(out)  :: fi, fj, fk
+    real(double), intent(out)                :: v
 
     ! local variables
-    real(double), dimension(3)              :: f3i, f3j, f3k, f2ij, f2jk, f2ik
-    real(double)                            :: modrij, modrjk, modrik, &
+    real(double), dimension(3)               :: f3i, f3j, f3k, f2ij, f2jk, f2ik
+    real(double)                             :: modrij, modrjk, modrik, &
                                                rijinv, rijainv, rjkinv, &
                                                rjkainv, rikinv, rikainv, &
                                                hjik, hijk, hikj, &
@@ -614,6 +622,18 @@ contains
     fi = zero
     fj = zero
     fk = zero
+    v2ij = zero
+    v2jk = zero
+    v2ik = zero
+    hjik = zero
+    hijk = zero
+    hikj = zero
+    f2ij = zero
+    f2jk = zero
+    f2ik = zero
+    f3i = zero
+    f3j = zero
+    f3k = zero
 
     modrij = sqrt(sum(rij**2))
     modrjk = sqrt(sum(rjk**2))
@@ -643,9 +663,11 @@ contains
       end if
     end if
 
-    call sw%sw_f3_e3(rij, rjk, rik, rijinv, modrij, modrjk, modrik, &
-                     rjkinv, rikinv, rijainv, rjkainv, rikainv, &
-                     f3i, f3j, f3k, hjik, hijk, hikj)
+    if (sw%threebody) then
+      call sw%sw_3body_force_and_energy(rij, rjk, rik, rijinv, modrij, &
+                       modrjk, modrik, rjkinv, rikinv, rijainv, rjkainv, &
+                       rikainv, f3i, f3j, f3k, hjik, hijk, hikj)
+    end if
 
     fi = fi + f2ij + f2ik + f3i
     fj = fj - f2ij + f2jk + f3j

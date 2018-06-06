@@ -420,7 +420,6 @@ contains
     if (mdr%iprint > 1) write(*,'(2x,a)') "get_force_and_energy_pp"
     mdr%mdl%E_p = zero
     mdr%f = zero
-    mdr%static_stress = zero
 
     if (mdr%ensemble(2:2) == 'p') call mdr%p_t%invert_lat
     call mdr%p_t%cell_cart2frac
@@ -455,43 +454,72 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     ! local variables
-    integer                         :: i, j, k, s_i, s_j, s_k, mu, nu
-    real(double), dimension(3)      :: rij, rjk, rik, fi, fj, fk
-    real(double)                    :: v
-    logical                         :: ij, ik, jk
-    logical, dimension(:,:), allocatable  :: pairs
+    integer                         :: i, j, k, s_i, s_j, s_k
+    real(double), dimension(3)      :: fij, f3i, f3j, f3k
+    real(double)                    :: vij,  hijk, hjik, hikj
+    real(double)                    :: modrij, rijinv, rijainv, &
+                                       modrik, rikinv, rikainv, &
+                                       modrjk, rjkinv, rjkainv
 
     if (mdr%iprint > 1) write(*,'(2x,a)') "get_force_and_energy_sw"
-    allocate(pairs(mdr%nat,mdr%nat))
-    pairs = .false.
     if (mdr%ensemble(2:2) == 'p') call mdr%p_t%invert_lat
     call mdr%p_t%cell_cart2frac
     call mdr%p_t%get_vt
 
     mdr%mdl%E_p = zero
     mdr%f = zero
-    mdr%static_stress = zero
 
     do i=1,mdr%nat
       s_i = mdr%species(i)
       do j=i+1,mdr%nat
         s_j = mdr%species(j)
-        do k=j+1,mdr%nat
-          s_k = mdr%species(k)
-          call mdr%pp%sw_force_and_energy(mdr%p_t%vt(i,j,:), &
-            mdr%p_t%vt(i,k,:), mdr%p_t%vt(j,k,:), pairs(i,j), pairs(i,k), &
-            pairs(j,k), fi, fj, fk, v)
-          pairs(i,j)  = .true.
-          pairs(j,i)  = .true.
-          pairs(i,k)  = .true.
-          pairs(k,i)  = .true.
-          pairs(j,k)  = .true.
-          pairs(k,j)  = .true.
-          mdr%f(i,:) = mdr%f(i,:) + fi
-          mdr%f(j,:) = mdr%f(j,:) + fj
-          mdr%f(k,:) = mdr%f(k,:) + fk
-          mdr%mdl%E_p = mdr%mdl%E_p + v
-        end do
+        fij = zero
+        vij = zero
+
+        ! 2 body force and energy
+        modrij = sqrt(sum(mdr%p_t%vt(i,j,:)**2))
+        if (modrij < mdr%pp%swcut) then
+          rijinv = one/modrij
+          rijainv = one/(modrij-mdr%pp%swcut)
+          vij = mdr%pp%sw_v2(modrij, rijainv)
+          fij = mdr%pp%sw_f2(mdr%p_t%vt(i,j,:), modrij, rijinv, rijainv, vij)
+        end if
+        mdr%f(i,:) = mdr%f(i,:) + fij
+        mdr%f(j,:) = mdr%f(j,:) - fij
+        mdr%mdl%E_p = mdr%mdl%E_p + vij
+
+        if (mdr%pp%threebody) then
+          do k=j+1,mdr%nat
+            s_k = mdr%species(k)
+            f3i = zero
+            f3j = zero
+            f3k = zero
+            hijk = zero
+            hikj = zero
+            hjik = zero
+
+            modrjk = sqrt(sum(mdr%p_t%vt(j,k,:)**2))
+            if (modrjk < mdr%pp%swcut) then
+              rjkinv = one/modrjk
+              rjkainv = one/(modrjk-mdr%pp%swcut)
+            end if
+
+            modrik = sqrt(sum(mdr%p_t%vt(i,k,:)**2))
+            if (modrik < mdr%pp%swcut) then
+              rikinv = one/modrik
+              rikainv = one/(modrik-mdr%pp%swcut)
+            end if
+
+            call mdr%pp%sw_3body_force_and_energy(mdr%p_t%vt(i,j,:), &
+              mdr%p_t%vt(j,k,:), mdr%p_t%vt(i,k,:), modrij, modrjk, modrik, &
+              rijinv, rjkinv, rikinv, rijainv, rjkainv, rikainv, f3i, f3j, &
+              f3k, hjik, hijk, hikj)
+            mdr%f(i,:) = mdr%f(i,:) + f3i
+            mdr%f(j,:) = mdr%f(j,:) + f3j
+            mdr%f(k,:) = mdr%f(k,:) + f3k
+            mdr%mdl%E_p = mdr%mdl%E_p + hijk + hjik + hikj
+          end do
+        end if
       end do
     end do
     call mdr%get_static_stress
@@ -627,7 +655,7 @@ contains
       call mdr%p_t%write_xsf(traj_unit, .true., 1, (s_end/mdr%dump_freq)+1)
       call mdr%mdl%stat_dump(stat_unit, s)
       if (mdr%dump .eqv. .true.) then
-        if (mdr%dump_freq == 0) call mdr%md_dump(dump_unit, s)
+        call mdr%md_dump(dump_unit, 0)
       end if
     else
       mdr%step = mdr%step + 1
@@ -863,7 +891,7 @@ contains
     integer                         :: i
     character(80)                   :: fmt
 
-    fmt = "(2i5,3e20.10)"
+    fmt = "(2i5,3f20.12)"
     do i=1,mdr%nat
       write(iou,fmt) i, mdr%species(i), arr(i,:)
     end do

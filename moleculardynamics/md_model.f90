@@ -23,7 +23,7 @@ type type_model
   ! real(double), dimension(:,:), allocatable :: f, f0
 
   ! Species
-  integer, dimension(:), pointer            :: species
+  integer, dimension(:), allocatable        :: species
   character(2), dimension(:), pointer       :: spec_label
   real(double), dimension(:), pointer       :: mass
 
@@ -115,6 +115,8 @@ contains
     mdl%E_nhc => th%e_nhc
     mdl%E_box => baro%ke_box
 
+    allocate(mdl%species(mdl%nat))
+    mdl%species = cell%spec_int
     mdl%r => cell%r
     mdl%rcart => cell%rcart
     mdl%h => cell%h

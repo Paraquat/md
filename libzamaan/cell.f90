@@ -56,6 +56,7 @@ type type_cell
     procedure :: supercell
     procedure :: cut_ortho
     procedure :: cut_frac
+    procedure :: get_neighbourlist
 end type type_cell
 
 contains
@@ -437,7 +438,7 @@ subroutine get_vt(p)
 
   class(type_cell), intent(inout)     :: p
 
-  integer                                 :: iat, jat
+  integer                                 :: iat, jat, np
   real(double), dimension(3)              :: r_ij, r_ij_cart
   real(double)                            :: d
 
@@ -449,8 +450,9 @@ subroutine get_vt(p)
   do iat=1,p%nat
     do jat=iat+1,p%nat
       r_ij = p%pbc_frac2cart(p%r(iat,:),p%r(jat,:))
-      p%vt(iat,jat,:) = r_ij_cart
-      p%vt(jat,iat,:) = -r_ij_cart
+      ! r_ij = p%mic(p%rcart(iat,:), p%rcart(jat,:))
+      p%vt(iat,jat,:) = r_ij
+      p%vt(jat,iat,:) = -r_ij
       d= sqrt(sum(r_ij_cart**2))
       p%dt(iat,jat) = d
       p%dt(jat,iat) = d
@@ -895,5 +897,32 @@ subroutine cut_frac(p, cutoff)
   cutoff = min(la, lb, lc)
 
 end subroutine cut_frac
+
+subroutine get_neighbourlist(p)
+
+  ! passed variables
+  class(type_cell), intent(inout)   :: p
+
+  ! local variables
+  integer :: i, j, nneigh
+  real(double) :: r, rcut
+  real(double), dimension(3) :: rij
+
+  call p%invert_lat
+  call p%cell_cart2frac
+  rcut = 2.5_double
+
+  do i=1,p%nat
+    nneigh = 0
+    do j=1,p%nat
+      if (i/=j) then
+        rij = p%pbc_frac2cart(p%r(i,:), p%r(j,:))    
+        r = sqrt(sum(rij**2))
+        if (r < rcut) nneigh = nneigh + 1
+      end if
+    end do
+    write(*,*) i, nneigh
+  end do
+end subroutine get_neighbourlist
 
 end module cell

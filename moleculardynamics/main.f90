@@ -29,7 +29,7 @@ call inp%read_input(inpfile)
 nsteps = inp%nsteps
 call pp%init_pp(inp%ppfile, inp%shift)
 call init_cell%read_cell(inp%sfile)
-init_cell%pbc_method = 'mic'
+init_cell%pbc_method = 'frac'
 
 call mdr%init_md(inp, init_cell, pp)
 mdr%dump_freq = inp%dump_freq
