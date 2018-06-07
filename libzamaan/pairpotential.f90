@@ -2,6 +2,7 @@ module pairpotential
 
 use datatypes
 use constants
+use cell
 
 implicit none
 
@@ -11,7 +12,7 @@ public :: type_pairpotential
 type type_pairpotential
   character(40) :: potential_type
   integer       :: ns, npair, ntriple
-  logical       :: threebody
+  logical       :: threebody, shift
   real(double), allocatable, dimension(:,:)  :: r_cut
   character(2), allocatable, dimension(:)    :: species_label
   real(double), allocatable, dimension(:,:)  :: sigma
@@ -23,7 +24,8 @@ type type_pairpotential
   ! Morse variables
   real(double), allocatable, dimension(:,:)  :: exp_re, exp_re2
   ! Stillinger-Weber variables
-  real(double) :: A, B, p, q, lambda, gamma, swsigma, sweps, swcut, cos_th_ref
+  real(double) :: A, B, p, q, lambda, gamma, swsigma, sigmainv, sweps, &
+                  swcut, cos_th_ref
 
   contains
     procedure, public  :: read_pp_file
@@ -33,19 +35,22 @@ type type_pairpotential
     procedure, public  :: init_sw
     procedure, public  :: pp_energy
     procedure, public  :: pp_force
-    procedure, public  :: pp_force_and_energy
-    procedure, public  :: lj_energy
-    procedure, public  :: lj_force
-    procedure, public  :: lj_force_and_energy
-    procedure, public  :: morse_energy
-    procedure, public  :: morse_force
-    procedure, public  :: morse_force_and_energy
-    procedure, public  :: sw_v2
-    procedure, public  :: sw_f2
-    procedure, public  :: sw_2body_force_and_energy
-    procedure, public  :: sw_h
-    procedure, public  :: sw_3body_force_and_energy
-    procedure, public  :: sw_force_and_energy
+    procedure, private :: pp_force_and_energy_component
+    procedure, private :: pp_force_and_energy
+    procedure, private :: mb_force_and_energy
+    procedure, private :: lj_energy
+    procedure, private :: lj_force
+    procedure, private :: lj_force_and_energy
+    procedure, private :: morse_energy
+    procedure, private :: morse_force
+    procedure, private :: morse_force_and_energy
+    procedure, private :: sw_v2
+    procedure, private :: sw_f2
+    procedure, private :: sw_2body_force_and_energy
+    procedure, private :: sw_h
+    procedure, private :: sw_3body_force_and_energy
+    procedure, private :: sw_force_and_energy
+    procedure, public  :: get_force_and_energy
 end type type_pairpotential
 
 contains
@@ -140,6 +145,7 @@ contains
 
     write(*,'(a)') "Initialising pair potential"
 
+    pp%shift = shift
     call pp%read_pp_file(filename)
 
     write(*,'("Pair potential type    ",a)') pp%potential_type
@@ -154,11 +160,11 @@ contains
     end do
     select case (pp%potential_type)
     case ("lennard-jones")
-      call pp%init_lj(shift)
-      write(*,'("Pair potential shift   ",l8)') shift
+      call pp%init_lj
+      write(*,'("Pair potential shift   ",l8)') pp%shift
     case ("morse")
-      call pp%init_morse(shift)
-      write(*,'("Pair potential shift   ",l8)') shift
+      call pp%init_morse
+      write(*,'("Pair potential shift   ",l8)') pp%shift
       write(*,'(2x,a)') "r_e"
       do i=1,pp%ns
         write(*,'(4x,3f10.6)') pp%r_e(i,:)
@@ -177,10 +183,9 @@ contains
   end subroutine init_pp
 
   ! Initialise a Lennard-Jones potential
-  subroutine init_lj(pp, shift)
+  subroutine init_lj(pp)
 
     class(type_pairpotential), intent(inout)  :: pp
-    logical, intent(in)           :: shift
 
     integer                       :: i,j
 
@@ -193,120 +198,172 @@ contains
 
     ! If the potential is truncated there is a discontinuity at r_cut.
     ! Avoid by shifting the energy/force by adding U(r_cut) or F(r_cut)
-    if (shift .eqv. .true.) then
+    if (pp%shift .eqv. .true.) then
       allocate(pp%e_shift(pp%ns,pp%ns), pp%f_shift(pp%ns,pp%ns))
       pp%e_shift = zero
       pp%f_shift = zero
       do i=1,pp%ns
         do j=1,pp%ns
-          pp%e_shift(i,j) = pp%lj_energy(pp%r_cut(i,j), i, j, .false.)
-          pp%f_shift(i,j) = pp%lj_force(pp%r_cut(i,j), i, j, .false.)
+          pp%e_shift(i,j) = pp%lj_energy(pp%r_cut(i,j), i, j)
+          pp%f_shift(i,j) = pp%lj_force(pp%r_cut(i,j), i, j)
         end do
       end do
     end if
   end subroutine init_lj
 
   ! Initialise a Morse potential
-  subroutine init_morse(mo, shift)
+  subroutine init_morse(pp)
 
-    class(type_pairpotential), intent(inout)  :: mo
-    logical, intent(in)           :: shift
+    class(type_pairpotential), intent(inout)  :: pp
 
     integer                       :: i,j
 
-    allocate(mo%exp_re(mo%ns,mo%ns), mo%exp_re2(mo%ns,mo%ns), &
-             mo%c_f(mo%ns,mo%ns))
-    mo%exp_re = exp(mo%sigma*mo%r_e)
-    mo%exp_re2 = mo%exp_re**2
-    mo%c_f = two*mo%sigma*mo%epsilon
+    allocate(pp%exp_re(pp%ns,pp%ns), pp%exp_re2(pp%ns,pp%ns), &
+             pp%c_f(pp%ns,pp%ns))
+    pp%exp_re = exp(pp%sigma*pp%r_e)
+    pp%exp_re2 = pp%exp_re**2
+    pp%c_f = two*pp%sigma*pp%epsilon
 
     ! If the potential is truncated there is a discontinuity at r_cut.
     ! Avoid by shifting the energy/force by adding U(r_cut) or F(r_cut)
-    if (shift .eqv. .true.) then
-      allocate(mo%e_shift(mo%ns,mo%ns), mo%f_shift(mo%ns,mo%ns))
-      mo%e_shift = zero
-      mo%f_shift = zero
-      do i=1,mo%ns
-        do j=1,mo%ns
-          mo%e_shift(i,j) = mo%morse_energy(mo%r_cut(i,j), i, j, .false.)
-          mo%f_shift(i,j) = mo%morse_force(mo%r_cut(i,j), i, j, .false.)
+    if (pp%shift .eqv. .true.) then
+      allocate(pp%e_shift(pp%ns,pp%ns), pp%f_shift(pp%ns,pp%ns))
+      pp%e_shift = zero
+      pp%f_shift = zero
+      do i=1,pp%ns
+        do j=1,pp%ns
+          pp%e_shift(i,j) = pp%morse_energy(pp%r_cut(i,j), i, j)
+          pp%f_shift(i,j) = pp%morse_force(pp%r_cut(i,j), i, j)
         end do
       end do
     end if
   end subroutine init_morse
 
   ! Energy wrapper for arbitrary pair potential
-  function pp_energy(pp, r_ij, s_i, s_j, shift) result(e)
+  function pp_energy(pp, r_ij, s_i, s_j) result(e)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: pp
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
 
     real(double)                :: e
 
     select case (pp%potential_type)
     case ("lennard-jones")
-      e = pp%lj_energy(r_ij, s_i, s_j, shift)
+      e = pp%lj_energy(r_ij, s_i, s_j)
     case ("morse")
-      e = pp%morse_energy(r_ij, s_i, s_j, shift)
+      e = pp%morse_energy(r_ij, s_i, s_j)
     end select
 
   end function pp_energy
 
   ! Force wrapper for arbitrary pair potential
-  function pp_force(pp, r_ij, s_i, s_j, shift) result(f)
+  function pp_force(pp, r_ij, s_i, s_j) result(f)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: pp
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
 
     real(double)                :: f
 
     select case (pp%potential_type)
     case ("lennard-jones")
-      f = pp%lj_force(r_ij, s_i, s_j, shift)
+      f = pp%lj_force(r_ij, s_i, s_j)
     case ("morse")
-      f = pp%morse_force(r_ij, s_i, s_j, shift)
+      f = pp%morse_force(r_ij, s_i, s_j)
     end select
 
   end function pp_force
 
-  ! Force and energy wrapper for arbitrary pair potential
-  subroutine pp_force_and_energy(pp, r_ij, s_i, s_j, shift, f, e)
+  ! Force and energy contribution from one pair
+  subroutine pp_force_and_energy_component(pp, r_ij, s_i, s_j, f, e)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: pp
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
     real(double), intent(out)   :: f
     real(double), intent(out)   :: e
 
     select case (pp%potential_type)
     case ("lennard-jones")
-      call pp%lj_force_and_energy(r_ij, s_i, s_j, shift, f, e)
+      call pp%lj_force_and_energy(r_ij, s_i, s_j, f, e)
     case ("morse")
-      call pp%morse_force_and_energy(r_ij, s_i, s_j, shift, f, e)
+      call pp%morse_force_and_energy(r_ij, s_i, s_j, f, e)
     end select
+
+  end subroutine pp_force_and_energy_component
+
+  ! Total force and energy
+  subroutine pp_force_and_energy(pp, p, v, f)
+
+    ! passed variables
+    class(type_pairpotential), intent(inout)  :: pp
+    type(type_cell), intent(inout)            :: p
+    real(double), intent(out)                 :: v
+    real(double), dimension(:,:), intent(out) :: f
+
+    ! local variables
+    integer                                   :: i, j, s_i, s_j
+    real(double), dimension(3)                :: rij, fij
+    real(double)                              :: modrij, modf, vij
+
+    call p%invert_lat
+    call p%cell_cart2frac
+    call p%get_vt
+
+    v = zero
+    f = zero
+
+    do i=1,p%nat
+      s_i = p%spec_int(i)
+      do j=i+1,p%nat
+        s_j = p%spec_int(j)
+        fij = zero
+        vij = zero
+
+        if (p%dt(i,j) < pp%r_cut(s_i,s_j)) then
+          call pp%pp_force_and_energy_component(p%dt(i,j), s_i, s_j, modf, vij)
+          fij = modf*p%vt(i,j,:)/p%dt(i,j)
+        end if
+        f(i,:) = f(i,:) + fij
+        f(j,:) = f(j,:) - fij
+        v = v + vij
+
+      end do
+    end do
 
   end subroutine pp_force_and_energy
 
+  ! Force and energy wrapper for manybody potential
+  subroutine mb_force_and_energy(pp, p, v, f)
+
+    ! passed variables
+    class(type_pairpotential), intent(inout)  :: pp
+    type(type_cell), intent(inout)            :: p
+    real(double), intent(out)                 :: v
+    real(double), dimension(:,:), intent(out) :: f
+
+    select case(pp%potential_type)
+    case('stillinger-weber')
+      call pp%sw_force_and_energy(p, v, f)
+    end select
+
+  end subroutine mb_force_and_energy
+
   ! Lennard-Jones energy
   ! U = 4*epsil*((sigma/r)^12 - (sigma/r)^6)
-  function lj_energy(lj, r_ij, s_i, s_j, shift) result(e)
+  function lj_energy(lj, r_ij, s_i, s_j) result(e)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: lj
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
 
     real(double)                :: e
     ! local variables
@@ -316,7 +373,7 @@ contains
     inv_r12 = one/(r_ij**12)
 
     e = lj%c_e(s_i,s_j)*(lj%s12(s_i,s_j)*inv_r12-lj%s6(s_i,s_j)*inv_r6)
-    if (shift .eqv. .true.) then
+    if (lj%shift .eqv. .true.) then
         e = e - lj%e_shift(s_i,s_j)
     end if
 
@@ -324,14 +381,13 @@ contains
 
 ! Lennard-Jones force (derivative of energy)
 ! U = 24*epsil/sigma*(2*(sigma/r)^13 - (sigma/r)^7)
-  function lj_force(lj, r_ij, s_i, s_j, shift) result(f)
+  function lj_force(lj, r_ij, s_i, s_j) result(f)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: lj
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
 
     real(double)                :: f
     ! local variables
@@ -341,20 +397,19 @@ contains
     inv_r13 = one/(r_ij**13)
 
     f = lj%c_f(s_i,s_j)*(2*lj%s12(s_i,s_j)*inv_r13-lj%s6(s_i,s_j)*inv_r7)
-    if (shift .eqv. .true.) then
+    if (lj%shift .eqv. .true.) then
       f = f - lj%f_shift(s_i,s_j)
     end if
 
   end function lj_force
 
   ! Compute force and energy in the same loop
-  subroutine lj_force_and_energy(lj, r_ij, s_i, s_j, shift, f, e)
+  subroutine lj_force_and_energy(lj, r_ij, s_i, s_j, f, e)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: lj
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
     real(double), intent(out)   :: f
     real(double), intent(out)   :: e
 
@@ -367,7 +422,7 @@ contains
     e = lj%c_e(s_i,s_j)*lj%s6(s_i,s_j)*inv_r6*(inv_r6*lj%s6(s_i,s_j)-one)
     f = -lj%c_f(s_i,s_j)*inv_r*inv_r6*lj%s6(s_i,s_j)* &
         (two*lj%s6(s_i,s_j)*inv_r6 - one)
-    if (shift .eqv. .true.) then
+    if (lj%shift .eqv. .true.) then
       f = f - lj%f_shift(s_i,s_j)
       e = e - lj%e_shift(s_i,s_j)
     end if
@@ -375,14 +430,13 @@ contains
 
   ! Morse energy
   ! U = eps[exp(-2*sigma(r-r_e))-2exp(-sigma(r-r_e))]
-  function morse_energy(mo, r_ij, s_i, s_j, shift) result(e)
+  function morse_energy(mo, r_ij, s_i, s_j) result(e)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: mo
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
 
     real(double)                :: e
     ! local variables
@@ -394,7 +448,7 @@ contains
     e = mo%epsilon(s_i,s_j)*(exp_2*mo%exp_re2(s_i,s_j) - &
                              two*exp_1*mo%exp_re(s_i,s_j))
 
-    if (shift .eqv. .true.) then
+    if (mo%shift .eqv. .true.) then
         e = e - mo%e_shift(s_i,s_j)
     end if
 
@@ -402,14 +456,13 @@ contains
 
 ! Morse force (derivative of energy)
 ! U = 2*sigma*eps[exp(-2*sigma(r-r_e)) - exp(-sigma(r-r_e))]
-  function morse_force(mo, r_ij, s_i, s_j, shift) result(f)
+  function morse_force(mo, r_ij, s_i, s_j) result(f)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: mo
 
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
 
     real(double)                :: f
     ! local variables
@@ -420,20 +473,19 @@ contains
 
     f = mo%c_f(s_i,s_j)*(exp_2*mo%exp_re2(s_i,s_j) - exp_1*mo%exp_re(s_i,s_j))
 
-    if (shift .eqv. .true.) then
+    if (mo%shift .eqv. .true.) then
       f = f - mo%f_shift(s_i,s_j)
     end if
 
   end function morse_force
 
   ! Compute force and energy in the same loop
-  subroutine morse_force_and_energy(mo, r_ij, s_i, s_j, shift, f, e)
+  subroutine morse_force_and_energy(mo, r_ij, s_i, s_j, f, e)
 
     ! passed variables
     class(type_pairpotential), intent(inout) :: mo
     real(double), intent(in)    :: r_ij
     integer, intent(in)         :: s_i, s_j
-    logical, intent(in)         :: shift
     real(double), intent(out)   :: f
     real(double), intent(out)   :: e
 
@@ -447,7 +499,7 @@ contains
                              two*exp_1*mo%exp_re(s_i,s_j))
     f = mo%c_f(s_i,s_j)*(exp_2*mo%exp_re2(s_i,s_j) - exp_1*mo%exp_re(s_i,s_j))
 
-    if (shift .eqv. .true.) then
+    if (mo%shift .eqv. .true.) then
       f = f - mo%f_shift(s_i,s_j)
       e = e - mo%e_shift(s_i,s_j)
     end if
@@ -596,84 +648,101 @@ contains
 
   end subroutine sw_3body_force_and_energy
 
-
-  ! Stillinger-Weber force and energy
-  subroutine sw_force_and_energy(sw, rij, rik, rjk, ij_sw, jk_sw, ik_sw, &
-                                 ijk_sw, fi, fj, fk, v)
+  subroutine sw_force_and_energy(sw, p, v, f)
 
     ! passed variables
-    class(type_pairpotential), intent(inout) :: sw
-    real(double), dimension(3), intent(in)   :: rij, rjk, rik
-    logical, intent(in)                      :: ij_sw, jk_sw, ik_sw, ijk_sw
-    real(double), dimension(3), intent(out)  :: fi, fj, fk
-    real(double), intent(out)                :: v
+    class(type_pairpotential), intent(inout)  :: sw
+    type(type_cell), intent(inout)            :: p
+    real(double), dimension(:,:), intent(out) :: f
+    real(double), intent(out)                 :: v
 
     ! local variables
-    real(double), dimension(3)               :: f3i, f3j, f3k, f2ij, f2jk, f2ik
-    real(double)                             :: modrij, modrjk, modrik, &
-                                               rijinv, rijainv, rjkinv, &
-                                               rjkainv, rikinv, rikainv, &
-                                               hjik, hijk, hikj, &
-                                               v2ij, v2jk, v2ik, &
-                                               cos_th_jik, cos_th_ijk, &
-                                               cos_th_ikj
+    integer                         :: i, j, k, s_i, s_j, s_k
+    real(double), dimension(3)      :: fij, f3i, f3j, f3k
+    real(double)                    :: vij,  hijk, hjik, hikj
+    real(double)                    :: rijinv, rijainv, rikinv, rikainv, &
+                                       rjkinv, rjkainv
+
+    call p%invert_lat
+    call p%cell_cart2frac
+    call p%get_vt
 
     v = zero
-    fi = zero
-    fj = zero
-    fk = zero
-    v2ij = zero
-    v2jk = zero
-    v2ik = zero
-    hjik = zero
-    hijk = zero
-    hikj = zero
-    f2ij = zero
-    f2jk = zero
-    f2ik = zero
-    f3i = zero
-    f3j = zero
-    f3k = zero
+    f = zero
 
-    modrij = sqrt(sum(rij**2))
-    modrjk = sqrt(sum(rjk**2))
-    modrik = sqrt(sum(rik**2))
-    if (modrij < sw%swcut) then
-      rijinv = one/modrij
-      rijainv = one/(modrij-sw%swcut)
-      if (ij_sw) then
-        v2ij = sw%sw_v2(modrij, rijainv)
-        f2ij = sw%sw_f2(rij, modrij, rijinv, rijainv, v2ij)
-      end if
-    end if
-    if (modrjk < sw%swcut) then
-      rjkinv = one/modrjk
-      rjkainv = one/(modrjk-sw%swcut)
-      if (jk_sw) then
-        v2jk = sw%sw_v2(modrjk, rjkainv)
-        f2jk = sw%sw_f2(rjk, modrjk, rjkinv, rjkainv, v2jk)
-      end if
-    end if
-    if (modrik < sw%swcut) then
-      rikinv = one/modrik
-      rikainv = one/(modrik-sw%swcut)
-      if (ik_sw) then
-        v2ik = sw%sw_v2(modrik, rikainv)
-        f2ik = sw%sw_f2(rik, modrik, rikinv, rikainv, v2ik)
-      end if
-    end if
+    do i=1,p%nat
+      s_i = p%spec_int(i)
+      do j=i+1,p%nat
+        s_j = p%spec_int(j)
+        fij = zero
+        vij = zero
 
-    if (sw%threebody) then
-      call sw%sw_3body_force_and_energy(rij, rjk, rik, rijinv, modrij, &
-                       modrjk, modrik, rjkinv, rikinv, rijainv, rjkainv, &
-                       rikainv, f3i, f3j, f3k, hjik, hijk, hikj)
-    end if
+        ! 2 body force and energy
+        if (p%dt(i,j) < sw%swcut) then
+          rijinv = one/p%dt(i,j)
+          rijainv = one/(p%dt(i,j)-sw%swcut)
+          vij = sw%sw_v2(p%dt(i,j), rijainv)
+          fij = sw%sw_f2(p%vt(i,j,:), p%dt(i,j), rijinv, rijainv, vij)
+        end if
+        f(i,:) = f(i,:) + fij
+        f(j,:) = f(j,:) - fij
+        v = v + vij
 
-    fi = fi + f2ij + f2ik + f3i
-    fj = fj - f2ij + f2jk + f3j
-    fk = fk - f2ik - f2jk + f3k
-    v = v + v2ij + v2jk + v2ik + hjik + hijk + hikj
+        if (sw%threebody) then
+          do k=j+1,p%nat
+            s_k = p%spec_int(k)
+            f3i = zero
+            f3j = zero
+            f3k = zero
+            hijk = zero
+            hikj = zero
+            hjik = zero
+
+            if (p%dt(j,k) < sw%swcut) then
+              rjkinv = one/p%dt(j,k)
+              rjkainv = one/(p%dt(j,k)-sw%swcut)
+            end if
+
+            if (p%dt(i,k) < sw%swcut) then
+              rikinv = one/p%dt(i,k)
+              rikainv = one/(p%dt(i,k)-sw%swcut)
+            end if
+
+            call sw%sw_3body_force_and_energy(p%vt(i,j,:), p%vt(j,k,:), &
+              p%vt(i,k,:), p%dt(i,j), p%dt(j,k), p%dt(i,k), rijinv, &
+              rjkinv, rikinv, rijainv, rjkainv, rikainv, f3i, f3j, f3k, &
+              hjik, hijk, hikj)
+            f(i,:) = f(i,:) + f3i
+            f(j,:) = f(j,:) + f3j
+            f(k,:) = f(k,:) + f3k
+            v = v + hijk + hjik + hikj
+          end do
+        end if
+      end do
+    end do
 
   end subroutine sw_force_and_energy
+
+  ! Wrapper for all potentials
+  subroutine get_force_and_energy(pp, p, v, f)
+
+    ! passed variables
+    class(type_pairpotential), intent(inout)  :: pp
+    type(type_cell), intent(inout)            :: p
+    real(double), dimension(:,:), intent(out) :: f
+    real(double), intent(out)                 :: v
+
+    select case(pp%potential_type)
+    case ("lennard-jones")
+      call pp%pp_force_and_energy(p, v, f)
+    case ("morse")
+      call pp%pp_force_and_energy(p, v, f)
+    case('stillinger-weber')
+      call pp%mb_force_and_energy(p, v, f)
+    case default
+      stop "Unknown forcefield"
+    end select
+
+  end subroutine get_force_and_energy
 
 end module pairpotential

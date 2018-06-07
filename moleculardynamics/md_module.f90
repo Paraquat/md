@@ -39,9 +39,6 @@ type type_md
     procedure, private :: init_velocities
     procedure, private :: remove_com_velocity
     procedure, private :: get_force_and_energy
-    procedure, private :: get_force_and_energy_mic
-    procedure, private :: get_force_and_energy_pp
-    procedure, private :: get_force_and_energy_sw
     procedure, private :: get_kinetic_energy_and_stress
     procedure, private :: get_static_stress
     procedure, private :: get_pv
@@ -111,17 +108,6 @@ contains
     ! degrees of freedom
     mdr%ndof = 3*mdr%nat
     if (mdr%remove_com_v .eqv. .true.) mdr%ndof = mdr%ndof-3
-    mdr%th%cell_ndof = 0
-    if (mdr%ensemble(2:2) == 'p') then
-      select case(mdr%baro%baro_type)
-      case('iso-mttk')
-        mdr%th%cell_ndof = 1
-      case('ortho-mttk')
-        mdr%th%cell_ndof = 3
-      case('mttk')
-        mdr%th%cell_ndof = 9
-      end select
-    end if
 
     call mdr%mdl%init_model(inp, mdr%p_t, mdr%v_t, mdr%f, mdr%th, &
                             mdr%baro, mdr%ndof)
@@ -153,14 +139,9 @@ contains
     write(*,'("Remove COM velocity    ",l8)') mdr%remove_com_v
     write(*,*) 
 
-    ! constant temperature
-    if (mdr%ensemble(3:3) == 't') then
-      call mdr%th%init_thermostat(inp, mdr%ndof, mdr%mdl%E_k)
-    end if
-    ! constant pressure
-    if (mdr%ensemble(2:2) == 'p') then
-      call mdr%baro%init_barostat(inp, mdr%ndof, mdr%mdl%E_k, init_cell)
-    end if
+    ! thermostat and barostat (just for temperature and pressure if type==none)
+    call mdr%th%init_thermostat(inp, mdr%ndof, mdr%mdl%E_k)
+    call mdr%baro%init_barostat(inp, mdr%ndof, mdr%mdl%E_k, init_cell)
 
     ! Adjust the pair potential cutoff if necessary
     cut_new = maxval(mdr%pp%r_cut) + one
@@ -356,175 +337,11 @@ contains
     class(type_md), intent(inout)   :: mdr
 
     if (mdr%iprint > 1) write(*,'(2x,a)') "get_force_and_energy"
-    select case (mdr%pp%potential_type)
-    case('stillinger-weber')
-      call mdr%get_force_and_energy_sw
-    case default
-      call mdr%get_force_and_energy_pp
-    end select
-  end subroutine get_force_and_energy
-
-  ! Compute the potential energy and force on each atom
-  subroutine get_force_and_energy_mic(mdr)
-
-    ! passed variables
-    class(type_md), intent(inout)   :: mdr
-
-    ! local variables
-    integer                         :: iat, jat, s_i, s_j, mu, nu
-    real(double), dimension(3)      :: r_ij_cart, f_ij
-    real(double)                    :: mod_r_ij, mod_f, pe
-
-    if (mdr%iprint > 1) write(*,'(2x,a)') "get_force_and_energy_mic"
-    mdr%mdl%E_p = zero
-    mdr%f = zero
-    mdr%static_stress = zero
-
-    do iat=1,mdr%nat
-      do jat=iat+1,mdr%nat
-        s_i = mdr%species(iat)
-        s_j = mdr%species(jat)
-        r_ij_cart = mdr%p_t%mic(mdr%p_t%rcart(iat,:), mdr%p_t%rcart(jat,:))
-        mod_r_ij = modulus(r_ij_cart)
-        if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
-          call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
-                                          mod_f, pe)
-          f_ij = mod_f*norm(r_ij_cart)
-          mdr%f(iat,:) = mdr%f(iat,:) + f_ij
-          mdr%f(jat,:) = mdr%f(jat,:) - f_ij
-          mdr%mdl%E_p = mdr%mdl%E_p + pe
-
-          mdr%static_stress = mdr%static_stress + &
-                              tensor_product(f_ij, r_ij_cart)/mod_r_ij
-          mdr%static_stress = mdr%static_stress + &
-                              tensor_product(-f_ij, -r_ij_cart)/mod_r_ij
-        end if
-      end do
-    end do
-
+    call mdr%pp%get_force_and_energy(mdr%p_t, mdr%mdl%E_p, mdr%f)
     write(*,'("  Potential energy = ",e16.8)') mdr%mdl%E_p
-
-  end subroutine get_force_and_energy_mic
-
-  ! Compute the potential energy and force on each atom
-  subroutine get_force_and_energy_pp(mdr)
-
-    ! passed variables
-    class(type_md), intent(inout)   :: mdr
-
-    ! local variables
-    integer                         :: iat, jat, s_i, s_j, mu, nu
-    real(double), dimension(3)      :: r_ij_cart, f_ij
-    real(double)                    :: mod_r_ij, mod_f, pe
-
-    if (mdr%iprint > 1) write(*,'(2x,a)') "get_force_and_energy_pp"
-    mdr%mdl%E_p = zero
-    mdr%f = zero
-
-    if (mdr%ensemble(2:2) == 'p') call mdr%p_t%invert_lat
-    call mdr%p_t%cell_cart2frac
-
-    do iat=1,mdr%nat
-      s_i = mdr%species(iat)
-      do jat=iat+1,mdr%nat
-        s_j = mdr%species(jat)
-        r_ij_cart = mdr%p_t%pbc_frac2cart(mdr%p_t%r(iat,:), mdr%p_t%r(jat,:))
-        mod_r_ij = modulus(r_ij_cart)
-        if (mod_r_ij < mdr%pp%r_cut(s_i,s_j)) then
-          call mdr%pp%pp_force_and_energy(mod_r_ij, s_i, s_j, mdr%shift, &
-                                          mod_f, pe)
-          f_ij = mod_f*norm(r_ij_cart)
-          mdr%f(iat,:) = mdr%f(iat,:) + f_ij
-          mdr%f(jat,:) = mdr%f(jat,:) - f_ij
-          mdr%mdl%E_p = mdr%mdl%E_p + pe
-
-          mdr%static_stress = mdr%static_stress + &
-                              tensor_product(f_ij, r_ij_cart)/mod_r_ij
-        end if
-      end do
-    end do
-
-    write(*,'("  Potential energy = ",e16.8)') mdr%mdl%E_p
-
-  end subroutine get_force_and_energy_pp
-
-  subroutine get_force_and_energy_sw(mdr)
-
-    ! passed variables
-    class(type_md), intent(inout)   :: mdr
-
-    ! local variables
-    integer                         :: i, j, k, s_i, s_j, s_k
-    real(double), dimension(3)      :: fij, f3i, f3j, f3k
-    real(double)                    :: vij,  hijk, hjik, hikj
-    real(double)                    :: modrij, rijinv, rijainv, &
-                                       modrik, rikinv, rikainv, &
-                                       modrjk, rjkinv, rjkainv
-
-    if (mdr%iprint > 1) write(*,'(2x,a)') "get_force_and_energy_sw"
-    if (mdr%ensemble(2:2) == 'p') call mdr%p_t%invert_lat
-    call mdr%p_t%cell_cart2frac
-    call mdr%p_t%get_vt
-
-    mdr%mdl%E_p = zero
-    mdr%f = zero
-
-    do i=1,mdr%nat
-      s_i = mdr%species(i)
-      do j=i+1,mdr%nat
-        s_j = mdr%species(j)
-        fij = zero
-        vij = zero
-
-        ! 2 body force and energy
-        modrij = sqrt(sum(mdr%p_t%vt(i,j,:)**2))
-        if (modrij < mdr%pp%swcut) then
-          rijinv = one/modrij
-          rijainv = one/(modrij-mdr%pp%swcut)
-          vij = mdr%pp%sw_v2(modrij, rijainv)
-          fij = mdr%pp%sw_f2(mdr%p_t%vt(i,j,:), modrij, rijinv, rijainv, vij)
-        end if
-        mdr%f(i,:) = mdr%f(i,:) + fij
-        mdr%f(j,:) = mdr%f(j,:) - fij
-        mdr%mdl%E_p = mdr%mdl%E_p + vij
-
-        if (mdr%pp%threebody) then
-          do k=j+1,mdr%nat
-            s_k = mdr%species(k)
-            f3i = zero
-            f3j = zero
-            f3k = zero
-            hijk = zero
-            hikj = zero
-            hjik = zero
-
-            modrjk = sqrt(sum(mdr%p_t%vt(j,k,:)**2))
-            if (modrjk < mdr%pp%swcut) then
-              rjkinv = one/modrjk
-              rjkainv = one/(modrjk-mdr%pp%swcut)
-            end if
-
-            modrik = sqrt(sum(mdr%p_t%vt(i,k,:)**2))
-            if (modrik < mdr%pp%swcut) then
-              rikinv = one/modrik
-              rikainv = one/(modrik-mdr%pp%swcut)
-            end if
-
-            call mdr%pp%sw_3body_force_and_energy(mdr%p_t%vt(i,j,:), &
-              mdr%p_t%vt(j,k,:), mdr%p_t%vt(i,k,:), modrij, modrjk, modrik, &
-              rijinv, rjkinv, rikinv, rijainv, rjkainv, rikainv, f3i, f3j, &
-              f3k, hjik, hijk, hikj)
-            mdr%f(i,:) = mdr%f(i,:) + f3i
-            mdr%f(j,:) = mdr%f(j,:) + f3j
-            mdr%f(k,:) = mdr%f(k,:) + f3k
-            mdr%mdl%E_p = mdr%mdl%E_p + hijk + hjik + hikj
-          end do
-        end if
-      end do
-    end do
     call mdr%get_static_stress
 
-  end subroutine get_force_and_energy_sw
+  end subroutine get_force_and_energy
 
   ! Compute the kinetic energy
   subroutine get_kinetic_energy_and_stress(mdr)

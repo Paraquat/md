@@ -21,7 +21,7 @@ type type_thermostat
   real(double)        :: tau_T   ! temperature coupling time period
   real(double)        :: dt      ! time step
   real(double)        :: lambda  ! Berendsen scaling factor
-  character(40)       :: th_type
+  character(40)       :: th_type, baro_type
   logical             :: cell_nhc ! whether to use a separate NHC for the cell
   character(3)        :: ensemble
   real(double), dimension(:), allocatable :: eta   ! thermostat k position
@@ -149,6 +149,7 @@ subroutine init_thermostat(th, inp, ndof, ke_atoms)
   th%ndof = ndof
   th%ke_atoms = ke_atoms
   th%th_type = inp%thermo_type
+  th%baro_type = inp%baro_type
   th%ensemble = inp%ensemble
   th%nat = inp%natoms
   th%dt = inp%dt
@@ -164,6 +165,16 @@ subroutine init_thermostat(th, inp, ndof, ke_atoms)
   if (th%th_type == 'nhc') then
     th%n_nhc = inp%n_nhc
     th%cell_nhc = inp%cell_nhc
+    select case(th%baro_type)
+    case('iso-mttk')
+      th%cell_ndof = 1
+    case('ortho-mttk')
+      th%cell_ndof = 3
+    case('mttk')
+      th%cell_ndof = 9
+    case default
+      th%cell_ndof = 0
+    end select
     call th%init_nhc(th%n_nhc, inp%nhc_mass, inp%cell_nhc_mass)
   end if
   call th%init_ys
@@ -548,17 +559,17 @@ subroutine get_nhc_energy(th)
 
   if (th%iprint > 1) write(*,'(6x,a)') "NHC: get_nhc_energy"
   th%e_nhc = zero
-  th%e_nhc_atoms = half*th%m_nhc(1)*th%v_eta(1)**2 + th%ndof*th%T_ext*th%eta(1)
+  th%e_nhc_atoms = half*th%m_nhc(1)*th%v_eta(1)**2 - th%ndof*th%T_ext*th%eta(1)
   do k=2,th%n_nhc
-    th%e_nhc_atoms = th%e_nhc_atoms + half*th%m_nhc(k)*th%v_eta(k)**2 + &
+    th%e_nhc_atoms = th%e_nhc_atoms + half*th%m_nhc(k)*th%v_eta(k)**2 - &
                th%T_ext*th%eta(k)
   end do
   if (th%cell_nhc) then
-    th%e_nhc_cell = half*th%m_nhc_cell(1)*th%v_eta_cell(1)**2 + &
+    th%e_nhc_cell = half*th%m_nhc_cell(1)*th%v_eta_cell(1)**2 - &
                     th%cell_ndof*th%T_ext*th%eta_cell(1)
     do k=2,th%n_nhc
       th%e_nhc_cell = th%e_nhc_cell + &
-                      half*th%m_nhc_cell(k)*th%v_eta_cell(k)**2 + &
+                      half*th%m_nhc_cell(k)*th%v_eta_cell(k)**2 - &
                       th%T_ext*th%eta_cell(k)
     end do
   end if
@@ -1086,7 +1097,7 @@ subroutine get_stress_and_pressure(baro)
   do i=1,3
     baro%P_int = baro%P_int + baro%stress(i,i)
   end do
-  baro%P_int = baro%P_int*third
+  baro%P_int = -baro%P_int*third
   write(*,'("  Pressure         = ",f16.8)') baro%P_int
 
 end subroutine get_stress_and_pressure

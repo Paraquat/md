@@ -24,14 +24,14 @@ module input_module
     integer         :: cp_freq = 100        ! time steps between checkpoint
     logical         :: comv = .true.        ! remove centre of mass velocity
     logical         :: cart = .false.       ! input structure in Cartesian coord
-    character(40)   :: v_distr = 'uniform'  ! Initial velocity distribution
-    character(40)   :: pbc_method = 'mic'
+    character(40)   :: v_distr = 'maxwell-boltzmann' ! velocity distribution
+    character(40)   :: pbc_method = 'frac'
 
     ! Pair potential paramters
     logical         :: shift = .false.
 
     ! Thermostat parameters
-    character(40)   :: thermo_type = 'velocity_rescale'
+    character(40)   :: thermo_type = 'none'
     real(double)    :: T_ext                ! external temperature
     real(double)    :: tau_T = one          ! thermostat time period
     integer         :: n_nhc = 5            ! length of Nose-Hoover chain
@@ -42,7 +42,7 @@ module input_module
     real(double), dimension(:), allocatable :: cell_nhc_mass
 
     ! Barostat paramters
-    character(40)   :: baro_type
+    character(40)   :: baro_type = 'none'
     real(double)    :: P_ext                ! external pressure
     real(double)    :: box_mass = one       ! box mass for extended-Lagrangian
     real(double)    :: tau_P = one          ! barostat time period

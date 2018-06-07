@@ -439,7 +439,7 @@ subroutine get_vt(p)
   class(type_cell), intent(inout)     :: p
 
   integer                                 :: iat, jat, np
-  real(double), dimension(3)              :: r_ij, r_ij_cart
+  real(double), dimension(3)              :: r_ij
   real(double)                            :: d
 
   if (.not. allocated(p%vt)) allocate(p%vt(p%nat,p%nat,3))
@@ -453,7 +453,7 @@ subroutine get_vt(p)
       ! r_ij = p%mic(p%rcart(iat,:), p%rcart(jat,:))
       p%vt(iat,jat,:) = r_ij
       p%vt(jat,iat,:) = -r_ij
-      d= sqrt(sum(r_ij_cart**2))
+      d=sqrt(sum(r_ij**2))
       p%dt(iat,jat) = d
       p%dt(jat,iat) = d
     end do
