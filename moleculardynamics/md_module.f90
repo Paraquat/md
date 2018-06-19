@@ -8,7 +8,7 @@ use pairpotential
 use rng
 use md_model
 use md_control
-use input_module,   only: md_input
+use pairdist
 
 implicit none
 
@@ -18,12 +18,13 @@ type type_md
   type(type_pairpotential)  :: pp
   type(type_thermostat)     :: th
   type(type_barostat)       :: baro
+  type(type_pairdist)       :: pd
   character(3)    :: ensemble
   integer         :: nsteps, step, nspec, nat, ndof
   integer         :: iprint, dump_freq, nrestart, cp_freq
   integer         :: n_nhc, n_mts, n_ys
-  logical         :: shift, remove_com_v, dump, restart, append
-  character(40)   :: position_file, dump_file, stat_file, cp_file, &
+  logical         :: shift, remove_com_v, dump, restart, append, rdf
+  character(40)   :: position_file, dump_file, stat_file, cp_file, gr_file, &
                      thermo_type, baro_type, init_distr, units, pbc_method
   integer, allocatable, dimension(:)          :: species
   real(double), allocatable, dimension(:)     :: mass
@@ -58,6 +59,8 @@ contains
 
   subroutine init_md(mdr, inp, init_cell, pp)
 
+    use input_module,   only: md_input
+
     ! passed variables
     class(type_md), intent(inout)   :: mdr
     type(md_input), intent(in)      :: inp
@@ -75,6 +78,7 @@ contains
     mdr%dump_file = "Frames"
     mdr%stat_file = "Stats"
     mdr%position_file = "trajectory.xsf"
+    mdr%gr_file = "gr.dat"
 
     mdr%nrestart = 0
     mdr%restart = inp%restart
@@ -97,6 +101,7 @@ contains
     mdr%tau_P = inp%tau_P
     mdr%n_mts = inp%n_mts
     mdr%n_ys = inp%n_ys
+    mdr%rdf = inp%rdf
 
     if (inp%cart .eqv. .false.) call mdr%p_t%cell_frac2cart
     mdr%pp = pp
@@ -112,8 +117,9 @@ contains
     call mdr%mdl%init_model(inp, mdr%p_t, mdr%v_t, mdr%f, mdr%th, &
                             mdr%baro, mdr%ndof)
 
+    ! Dumping information
     mdr%dump = .true.
-    mdr%dump_freq = 1
+    mdr%dump_freq = inp%dump_freq
     mdr%units = 'reduced-lj'
 
     select case (mdr%units)
@@ -167,6 +173,11 @@ contains
                                mdr%p_t%spec_count(i), mdr%p_t%mass(i)
     end do
     write(*,*)
+
+    ! radial distribution function
+    if (mdr%rdf) then
+      call mdr%pd%init_pd(mdr%p_t, inp%rdfcut, inp%gwidth, inp%dr, inp%rmin)
+    end if
 
     if (mdr%restart .eqv. .false.) then
       write(*,'(2x,a)') "Initial unit cell:"
@@ -473,6 +484,9 @@ contains
       call mdr%mdl%stat_dump(stat_unit, s)
       if (mdr%dump .eqv. .true.) then
         call mdr%md_dump(dump_unit, 0)
+        if (mdr%rdf) then
+          call mdr%pd%update_rdist(mdr%p_t)
+        end if 
       end if
     else
       mdr%step = mdr%step + 1
@@ -632,6 +646,10 @@ contains
     write(*,'(a)')  "Completed MD run"
     call mdr%p_t%cell_cart2frac
     call mdr%p_t%write_cell("cell.out")
+    if (mdr%rdf) then
+      call mdr%pd%norm_rdist
+      call mdr%pd%write_gr(mdr%gr_file)
+    end if
     close(traj_unit)
     close(dump_unit)
     close(stat_unit)

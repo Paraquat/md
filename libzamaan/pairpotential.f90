@@ -48,6 +48,7 @@ type type_pairpotential
     procedure, private :: sw_f2
     procedure, private :: sw_2body_force_and_energy
     procedure, private :: sw_h
+    procedure, private :: sw_grad_h
     procedure, private :: sw_3body_force_and_energy
     procedure, private :: sw_force_and_energy
     procedure, public  :: get_force_and_energy
@@ -177,6 +178,7 @@ contains
       write(*,'("q                      ",f8.4)') pp%q
       write(*,'("lambda                 ",f8.4)') pp%lambda
       write(*,'("gamma                  ",f8.4)') pp%gamma
+      write(*,'("1/sigma                ",f8.4)') pp%sigmainv
     end select
     write(*,*)
 
@@ -512,6 +514,7 @@ contains
     class(type_pairpotential), intent(inout) :: sw
 
     sw%swsigma = sw%sigma(1,1)
+    sw%sigmainv = one/sw%swsigma
     sw%sweps = sw%epsilon(1,1)
     sw%swcut = sw%r_cut(1,1)
     sw%cos_th_ref = -third
@@ -530,6 +533,7 @@ contains
     real(double), intent(in)    :: rij, rijainv
     real(double)                :: v2
 
+    v2 = zero
     if (rij < sw%swcut) then
       v2 = sw%sweps*sw%A*(sw%B*rij**(-sw%p) - rij**(-sw%q))*exp(rijainv)
     end if
@@ -547,14 +551,11 @@ contains
     real(double), dimension(3)               :: f2
 
     sw%npair = sw%npair + 1
+    f2 = zero
     if (modrij < sw%swcut) then
-      f2 = -v2*rij*rijinv*(rijinv*(sw%p*sw%B*modrij**(-sw%p) - &
+      f2 = -v2*rij*(rijinv*(sw%p*sw%B*modrij**(-sw%p) - &
                           sw%q*modrij**(-sw%q))/(sw%B*modrij**(-sw%p) - &
                           modrij**(-sw%q)) + rijainv**2)
-      ! f2 = sw%A*(sw%B*sw%p*modrij**(-sw%p) - &
-        ! sw%q*modrij**(-sw%q))*rijinv*exp(rijainv) - &
-        ! rijainv**2*sw%A*(sw%B*modrij**(-sw%p) - &
-        ! modrij**(-sw%q))*exp(rijainv)
     end if
 
   end function sw_f2
@@ -584,17 +585,35 @@ contains
   end subroutine sw_2body_force_and_energy
 
   ! Stillinger-Weber three-body energy component
-  function sw_h(sw, rinv1, rinv2, cos_th) result(h)
+  function sw_h(sw, rainv1, rainv2, cos_th) result(h)
 
     ! passed variables
     class(type_pairpotential), intent(inout)  :: sw
-    real(double), intent(in)                :: rinv1, rinv2, cos_th
+    real(double), intent(in)                :: rainv1, rainv2, cos_th
     real(double)                            :: h
 
-    h = sw%sweps*sw%lambda*exp(sw%gamma*rinv1 + sw%gamma*rinv2) * &
+    h = sw%sweps*sw%lambda*exp(sw%gamma*(rainv1+rainv2)) * &
         (cos_th-sw%cos_th_ref)**2
 
   end function sw_h
+
+  ! gradient of three-body energy component j or k
+  subroutine sw_grad_h(sw, riju, riku, rijinv, rikinv, rijainv, rikainv, &
+                  cos_th_jik, f)
+
+    ! passed varialbes
+    class(type_pairpotential), intent(inout)  :: sw
+    real(double), dimension(3), intent(in)    :: riju, riku
+    real(double), intent(in)                  :: rijinv, rikinv, &
+                                                 rijainv, rikainv, cos_th_jik 
+    real(double), dimension(3), intent(out)   :: f
+
+    f = -sw%lambda*sw%sweps*exp(sw%gamma*(rijainv + rikainv)) * &
+        (cos_th_jik - sw%cos_th_ref) * &
+        (riju*(cos_th_jik - sw%cos_th_ref)*sw%gamma*rijainv**2 + &
+         two*rijinv*(cos_th_jik*riju - riku))
+
+  end subroutine sw_grad_h
 
   ! Stillinger-Weber three-body force and energy
   subroutine sw_3body_force_and_energy(sw, rij, rjk, rik, modrij, modrjk, &
@@ -615,35 +634,44 @@ contains
 
     sw%ntriple = sw%ntriple + 1
 
+    fi = zero
+    fj = zero
+    fk = zero
+
     ! jik permutation
     if ((modrij < sw%swcut) .and. (modrik < sw%swcut)) then
-      cos_th_jik = dot_product(rij, rik)*rijinv*rikinv
+      cos_th_jik = dot_product(rij, rik)
       h_jik = sw%sw_h(rijainv, rikainv, cos_th_jik)
-      fi = -sw%gamma*h_jik*(rij*rijinv*rijainv**2 + rik*rikinv*rikainv**2) + &
+      ! call sw%sw_grad_h(rij, rik, rijinv, rikinv, rijainv, rikainv, &
+      !                   cos_th_jik, fi)
+      fi = -sw%gamma*h_jik*(rij*rijainv**2 + rik*rikainv**2) + &
            two*sw%lambda*exp(sw%gamma*(rijainv + rikainv)) * &
            (cos_th_jik - sw%cos_th_ref) * &
-           (rij*rijinv*rikinv + rik*rikinv*rijinv -  &
-           (rij*rijinv*rikinv + rik*rikinv*rijinv)*cos_th_jik)
+           (rij*rikinv + rik*rijinv -  &
+           (rij*rikinv + rik*rijinv)*cos_th_jik)
     end if
 
     ! ijk permutation
     if ((modrij < sw%swcut) .and. (modrjk < sw%swcut)) then
-      cos_th_ijk = dot_product(rij, rjk)*rijinv*rjkinv
+      cos_th_ijk = dot_product(rij, rjk)
       h_ijk = sw%sw_h(rijainv, rjkainv, cos_th_ijk)
-      fj = -sw%gamma*h_ijk*(rij*rijinv*rijainv**2) + &
+      ! call sw%sw_grad_h(rij, rjk, rijinv, rjkinv, rijainv, rjkainv, &
+      !                   cos_th_ijk, fj)
+      fj = -sw%gamma*h_ijk*(rij*rijainv**2) + &
            two*sw%lambda*exp(sw%gamma*(rijainv + rjkainv)) * &
            (cos_th_ijk - sw%cos_th_ref) * &
-           (rjk*rjkinv*rijinv + rij*rijinv*rijinv*cos_th_ijk)
+           (rjk*rijinv + rij*rijinv*cos_th_ijk)
     end if
 
     ! ikj permutation
     if ((modrik < sw%swcut) .and. (modrjk < sw%swcut)) then
-      cos_th_ikj = dot_product(rik, rjk)*rikinv*rjkinv
-      h_ikj = sw%sw_h(rikainv, rjkainv, cos_th_ikj)
-      fk = -sw%gamma*h_ikj*(rik*rikinv*rikainv**2) + &
+      cos_th_ikj = dot_product(rik, rjk)
+      ! h_ikj = sw%sw_h(rikainv, rjkainv, cos_th_ikj)
+      ! fk = -fi-fj
+      fk = -sw%gamma*h_ikj*(rik*rikainv**2) + &
            two*sw%lambda*exp(sw%gamma*(rikainv + rjkainv)) * &
            (cos_th_ikj - sw%cos_th_ref) * &
-           (-rjk*rjkinv*rikinv + rik*rikinv*rikinv*cos_th_ikj)
+           (-rjk*rikinv + rik*rikinv*cos_th_ikj)
     end if
 
   end subroutine sw_3body_force_and_energy
@@ -658,10 +686,10 @@ contains
 
     ! local variables
     integer                         :: i, j, k, s_i, s_j, s_k
-    real(double), dimension(3)      :: fij, f3i, f3j, f3k
+    real(double), dimension(3)      :: fij, f3i, f3j, f3k, riju, rjku, riku
     real(double)                    :: vij,  hijk, hjik, hikj
-    real(double)                    :: rijinv, rijainv, rikinv, rikainv, &
-                                       rjkinv, rjkainv
+    real(double)                    :: rij, rjk, rik, rijinv, rijainv, &
+                                       rikinv, rikainv, rjkinv, rjkainv
 
     call p%invert_lat
     call p%cell_cart2frac
@@ -672,24 +700,27 @@ contains
 
     do i=1,p%nat
       s_i = p%spec_int(i)
-      do j=i+1,p%nat
+      do j=i+1,p%nat ! loop over all pairs
         s_j = p%spec_int(j)
         fij = zero
         vij = zero
 
         ! 2 body force and energy
+        rij = p%dt(i,j)*sw%sigmainv
+        riju = p%vt(i,j,:)/p%dt(i,j)
         if (p%dt(i,j) < sw%swcut) then
-          rijinv = one/p%dt(i,j)
-          rijainv = one/(p%dt(i,j)-sw%swcut)
-          vij = sw%sw_v2(p%dt(i,j), rijainv)
-          fij = sw%sw_f2(p%vt(i,j,:), p%dt(i,j), rijinv, rijainv, vij)
+          rijinv = one/rij
+          rijainv = one/(rij-sw%swcut)
+          vij = sw%sw_v2(rij, rijainv)
+          fij = sw%sw_f2(riju, rij, rijinv, rijainv, vij)
         end if
         f(i,:) = f(i,:) + fij
         f(j,:) = f(j,:) - fij
         v = v + vij
 
+        ! 3 body force and energy
         if (sw%threebody) then
-          do k=j+1,p%nat
+          do k=j+1,p%nat ! loop over all triples
             s_k = p%spec_int(k)
             f3i = zero
             f3j = zero
@@ -698,20 +729,24 @@ contains
             hikj = zero
             hjik = zero
 
+            rjk = p%dt(j,k)*sw%sigmainv
+            rjku = p%vt(j,k,:)/p%dt(j,k)
             if (p%dt(j,k) < sw%swcut) then
-              rjkinv = one/p%dt(j,k)
-              rjkainv = one/(p%dt(j,k)-sw%swcut)
+              rjkinv = one/rjk
+              rjkainv = one/(rjk-sw%swcut)
             end if
 
+            rik = p%dt(i,k)*sw%sigmainv
+            riku = p%vt(i,k,:)/p%dt(i,k)
             if (p%dt(i,k) < sw%swcut) then
-              rikinv = one/p%dt(i,k)
-              rikainv = one/(p%dt(i,k)-sw%swcut)
+              rjkinv = one/rjk
+              rikinv = one/rik
+              rikainv = one/(rik-sw%swcut)
             end if
 
-            call sw%sw_3body_force_and_energy(p%vt(i,j,:), p%vt(j,k,:), &
-              p%vt(i,k,:), p%dt(i,j), p%dt(j,k), p%dt(i,k), rijinv, &
-              rjkinv, rikinv, rijainv, rjkainv, rikainv, f3i, f3j, f3k, &
-              hjik, hijk, hikj)
+            call sw%sw_3body_force_and_energy(riju, rjku, riku, &
+              rij, rjk, rik, rijinv, rjkinv, rikinv, &
+              rijainv, rjkainv, rikainv, f3i, f3j, f3k, hjik, hijk, hikj)
             f(i,:) = f(i,:) + f3i
             f(j,:) = f(j,:) + f3j
             f(k,:) = f(k,:) + f3k

@@ -26,6 +26,11 @@ module input_module
     logical         :: cart = .false.       ! input structure in Cartesian coord
     character(40)   :: v_distr = 'maxwell-boltzmann' ! velocity distribution
     character(40)   :: pbc_method = 'frac'
+    logical         :: rdf = .false.        ! compute g(r)?
+    real(double)    :: rdfcut = 10.0        ! g(r) cutoff
+    real(double)    :: dr                   ! g(r) bin width
+    real(double)    :: rmin                 ! g(r) minimum
+    real(double)    :: gwidth               ! g(r) Gaussian smoothing width
 
     ! Pair potential paramters
     logical         :: shift = .false.
@@ -179,7 +184,23 @@ subroutine read_input(inp, filename)
     case ('iprint')
       read(param,*) inp%iprint
       write(*,'("iprint              ",i20)') inp%iprint
+    case ('rdf')
+      read(param,*) inp%rdf
+      write(*,'("rdf                 ",l20)') inp%rdf
+    case ('rdfcut')
+      read(param,*) inp%rdfcut
+      write(*,'("rdfcut              ",f20.6)') inp%rdfcut
+    case ('dr')
+      read(param,*) inp%dr
+      write(*,'("dr                  ",f20.6)') inp%dr
+    case ('rmin')
+      read(param,*) inp%rmin
+      write(*,'("rmin                ",f20.6)') inp%rmin
+    case ('gwidth')
+      read(param,*) inp%gwidth
+      write(*,'("gwidth              ",f20.6)') inp%gwidth
     end select
+
   end do
   write(*,*)
 

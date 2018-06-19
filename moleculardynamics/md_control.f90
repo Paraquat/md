@@ -400,7 +400,7 @@ subroutine update_G_nhc(th, k, box_ke)
   if (th%cell_nhc) then
     if (k==1) then
       th%G_nhc(k) = 2*th%ke_atoms - th%ndof*th%k_B_md*th%T_ext
-      th%G_nhc_cell(k) = 2*box_ke - th%T_ext*th%k_B_md*th%T_ext
+      th%G_nhc_cell(k) = 2*box_ke - th%k_B_md*th%T_ext
     else
       th%G_nhc(k) = th%m_nhc(k-1)*th%v_eta(k-1)**2 - th%k_B_md*th%T_ext
       th%G_nhc_cell(k) = th%m_nhc_cell(k-1)*th%v_eta_cell(k-1)**2 - &
@@ -534,7 +534,7 @@ subroutine propagate_nvt_nhc(th, dt, v)
         if (k<th%n_nhc) then
           ! Trotter expansion to avoid sinh singularity (see MTTK paper)
           call th%propagate_v_eta_exp(k, dt, eighth)
-          if (k /= 1) call th%update_G_nhc(k, zero)
+          if (k /= 1) call th%update_G_nhc(k+1, zero)
           call th%propagate_v_eta_lin(k, dt, quarter)
           call th%propagate_v_eta_exp(k, dt, eighth)
         else
@@ -1252,7 +1252,7 @@ subroutine propagate_npt_mttk(baro, th, dt, m, v, ke_atoms)
       ! Update thermostat velocities
       do i_nhc=1,th%n_nhc-1
         call th%propagate_v_eta_exp(i_nhc, th%dt_ys(i_ys), eighth)
-        if (i_nhc /= 1) call th%update_G_nhc(i_nhc, baro%ke_box)
+        if (i_nhc /= 1) call th%update_G_nhc(i_nhc+1, baro%ke_box)
         call th%propagate_v_eta_lin(i_nhc, th%dt_ys(i_ys), quarter)
         call th%propagate_v_eta_exp(i_nhc, th%dt_ys(i_ys), eighth)
       end do

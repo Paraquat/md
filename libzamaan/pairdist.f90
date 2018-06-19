@@ -16,8 +16,7 @@ type type_pairdist
   type(type_cell)                         :: p
 
   integer                                 :: maxspecies=5
-  integer                                 :: nat, nbins, ntrans, cellrad, &
-                                             nsteps, nqpt
+  integer                                 :: nat, nbins, nsteps, nqpt, nframes
   character(2)                            :: ignorespec
 
   real(double)                            :: gwidth, rho, vol, cut, cutsq, &
@@ -27,7 +26,6 @@ type type_pairdist
 
   real(double), allocatable, dimension(:) :: bins, nfac_total, &
                                              gr_total, sq_total, sq_sum
-  real(double), allocatable, dimension(:,:)   :: translations, dt
   real(double), allocatable, dimension(:,:,:) :: nfac, gr, sq
   integer, allocatable, dimension(:)      :: total, cum_total
   integer, allocatable, dimension(:,:,:)  :: freq, cum_freq
@@ -38,10 +36,8 @@ type type_pairdist
   contains
     procedure :: init_pd
     procedure :: reset_pd
-    procedure :: get_trans
     procedure :: update_rdist
-    procedure :: update_rdist_dt
-    procedure :: get_neighbours_dt
+    procedure :: get_neighbours
     procedure :: get_nfac
     procedure :: smooth_gr
     procedure :: norm_rdist
@@ -57,21 +53,20 @@ end type type_pairdist
 contains
 
 ! initialise the pair distribution object from a cell object
-! cellrad = 'radius' of supercell over which to compute pair distributions
 ! gwidth = width for gaussian smoothing
 ! delr = width of histogram bins for r
-subroutine init_pd(pd, cell, cellrad, cut, gwidth, delr, rmin)
+subroutine init_pd(pd, cell, cut, gwidth, delr, rmin)
 
+  ! passed variables
   class(type_pairdist), intent(inout)     :: pd
-
   type(type_cell), intent(in)             :: cell
   type(type_cell)                         :: p
-
   real(double), intent(in)                :: cut, gwidth, delr, rmin
-  integer, intent(in)                     :: cellrad
+
+  ! local variables
+  real(double)                            :: min_side
 
   pd%p = cell
-  pd%cellrad = cellrad
   pd%h = p%h
   pd%cut = cut                        ! distance cutoff for g(r)
   pd%cutsq = cut**2                   ! distance cutoff squared
@@ -82,6 +77,14 @@ subroutine init_pd(pd, cell, cellrad, cut, gwidth, delr, rmin)
   pd%qmin = 2*pi/cut
   pd%rmin = rmin                      ! minimum value of r
   pd%ignorespec = ''                  ! species to omit from g_total(r)
+  pd%nframes = 0                      ! number for frames for normalisation
+
+  min_side = min(cell%h(1,1), cell%h(2,2), cell%h(3,3))
+  if (min_side > pd%cut) then
+    write(*,'(2x,a)') "Warning: rdf cutoff is less than shortest box side"
+    write(*,'(2x,a,f8.4)') "Adjusting rdfcut to ", min_side
+    pd%cut = min_side
+  end if
 
   ! constants
   pd%vol = pd%p%volume()                      ! volume
@@ -96,10 +99,6 @@ subroutine init_pd(pd, cell, cellrad, cut, gwidth, delr, rmin)
   allocate(pd%cum_freq(pd%nbins,pd%p%nspec,pd%p%nspec))
   allocate(pd%nfac(pd%nbins,pd%p%nspec,pd%p%nspec))
   allocate(pd%gr(pd%nbins,pd%p%nspec,pd%p%nspec))
-
-  pd%ntrans = pd%p%nat*(2*pd%cellrad+1)**3
-  allocate(pd%dt(pd%p%nat,pd%p%nat))
-  allocate(pd%translations(pd%ntrans,3))
 
   pd%total = 0
   pd%cum_total = 0
@@ -118,84 +117,26 @@ subroutine reset_pd(pd)
   pd%cum_freq = 0
 end subroutine reset_pd
 
-! Get translations for periodic boundary conditions. There's definitely a
-! quicker way to do this. FIX
-subroutine get_trans(pd)
-
-  class(type_pairdist), intent(inout)     :: pd
-
-  integer                                 :: ncell, i, j, k, n, m
-  real(double), dimension(3)              :: vec
-
-  m=1
-  do i=-pd%cellrad,pd%cellrad
-    do j=-pd%cellrad,pd%cellrad
-      do k=-pd%cellrad,pd%cellrad
-        vec = (/i,j,k/)
-        do n=1,pd%p%nat
-          pd%translations(m,:) = pd%p%r(n,:) + vec
-          m=m+1
-        end do
-      end do
-    end do
-  end do
-
-end subroutine get_trans
-
-! Update the pair distribution from current configuration in the cell pd%p
-subroutine update_rdist(pd)
-
-  class(type_pairdist), intent(inout)     :: pd
-
-  real(double), dimension(3)              :: diff, diff_cart
-  real(double)                            :: d, dsq
-  integer                                 :: iat, jat, ispec, jspec, ig
-
-  ! calculate and bin atom separations
-  call pd%get_trans()
-  do iat=1,pd%p%nat
-    do jat=iat,pd%ntrans
-      diff = pd%p%r(iat,:) - pd%translations(jat,:)
-      diff_cart = pd%p%disp_frac2cart_noshift(diff)
-      dsq = sum(diff_cart**2)
-      if (dsq .lt. pd%cutsq .and. dsq .gt. small) then
-        d = sqrt(dsq)
-        ig = int(d/pd%delr)
-        pd%total(ig) = pd%total(ig)+1
-        do ispec=1,pd%p%nspec
-          do jspec=ispec,pd%p%nspec
-            if (pd%p%species(iat) .eq. pd%p%spec(ispec) .and. &
-                pd%p%species(modulo(jat,pd%p%nat)+1) .eq. pd%p%spec(jspec)) then
-              pd%freq(ig,ispec,jspec) = pd%freq(ig,ispec,jspec)+1
-            end if
-          end do
-        end do
-      end if
-    end do
-  end do
-
-end subroutine update_rdist
-
 ! Update pair distribution using distance table
-subroutine update_rdist_dt(pd)
+subroutine update_rdist(pd, p)
 
   class(type_pairdist), intent(inout)     :: pd
+  type(type_cell), intent(in)             :: p
 
   integer                                 :: iat, jat, ispec, jspec, ig
 
   ! bin atomic separations
-  do iat=1,pd%p%nat
-    do jat=1,pd%p%nat
-      if (pd%p%dt(iat,jat) .lt. pd%cut .and. pd%p%dt(iat,jat) .gt. small) then
-        if (pd%p%species(iat) .ne. pd%ignorespec .and. pd%p%species(jat) .ne. pd%ignorespec) then
-  !        ig = int(pd%dt(iat,jat)/pd%delr)
-          ig = int((pd%p%dt(iat,jat)+pd%delr)/pd%delr)
-          pd%total(ig) = pd%total(ig)+1
-          do ispec=1,pd%p%nspec
-            do jspec=ispec,pd%p%nspec
-              if (pd%p%species(iat) .eq. pd%p%spec(ispec) .and. &
-                  pd%p%species(modulo(jat,pd%p%nat)+1) .eq. pd%p%spec(jspec)) then
-                pd%freq(ig,ispec,jspec) = pd%freq(ig,ispec,jspec)+1
+  do iat=1,p%nat
+    do jat=iat+1,p%nat
+      if (p%dt(iat,jat) .lt. pd%cut) then
+        if (p%species(iat) .ne. pd%ignorespec .and. p%species(jat) .ne. pd%ignorespec) then
+          ig = int((p%dt(iat,jat)+pd%delr)/pd%delr)
+          pd%total(ig) = pd%total(ig)+2
+          do ispec=1,p%nspec
+            do jspec=ispec,p%nspec
+              if (p%species(iat) .eq. p%spec(ispec) .and. &
+                  p%species(modulo(jat,p%nat)+1) .eq. p%spec(jspec)) then
+                pd%freq(ig,ispec,jspec) = pd%freq(ig,ispec,jspec)+2
               end if
             end do
           end do
@@ -203,12 +144,13 @@ subroutine update_rdist_dt(pd)
       end if
     end do
   end do
+  pd%nframes = pd%nframes + 1
 
-end subroutine update_rdist_dt
+end subroutine update_rdist
 
 ! Use distance table to get list of neighbours of atom centreid with a
 ! given radius
-subroutine get_neighbours_dt(pd, centreid, radius, nneigh, nlist)
+subroutine get_neighbours(pd, centreid, radius, nneigh, nlist)
 
   class(type_pairdist), intent(inout)     :: pd
 
@@ -221,13 +163,13 @@ subroutine get_neighbours_dt(pd, centreid, radius, nneigh, nlist)
 
   nneigh=0
   do i=1,pd%p%nat
-    if (pd%dt(centreid,i) .lt. radius) then
+    if (pd%p%dt(centreid,i) .lt. radius) then
       nneigh=nneigh+1
       nlist(nneigh)=i
     end if
   end do
 
-end subroutine get_neighbours_dt
+end subroutine get_neighbours
 
 ! Compute the ideal gas normalisation factors
 subroutine get_nfac(pd, nframes)
@@ -282,16 +224,14 @@ subroutine smooth_gr(pd)
 end subroutine smooth_gr
 
 ! Normalise the pair distribution to get g(r)
-subroutine norm_rdist(pd, nframes)
+subroutine norm_rdist(pd)
 
   class(type_pairdist), intent(inout)     :: pd
-
-  integer, intent(in)                     :: nframes
 
   integer, parameter                      :: lwindow=10
   integer                                 :: i, j
 
-  call pd%get_nfac(nframes)
+  call pd%get_nfac(pd%nframes)
 
   pd%gr_total = pd%total/pd%nfac_total
   pd%gr = pd%freq/pd%nfac

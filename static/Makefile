@@ -4,8 +4,8 @@ PROG = static
 
 #FCFLAGS = -fbackslash
 LDFLAGS = $(LPATH) $(IPATH) -lzamaan  -lfftw3 -llapack -lblas
-SRCS = static_module.f90 cmdline.f90 main.f90
-OBJS = static_module.o cmdline.o main.o
+SRCS = input_module.f90 cmdline.f90 static_module.f90 main.f90
+OBJS = input_module.o cmdline.o  static_module.o main.o
 DEBUG = -O0 -g -fbounds-check
 
 .SUFFIXES: $(SUFFIXES) .f90
@@ -26,6 +26,8 @@ $(PROG): $(OBJS)
 
 %.o: %.mod
 
-static_module.o: static_module.f90 ../libzamaan/libzamaan.a
+$(OBJS): $(SRCS)
+input_module.o: input_module.f90
 cmdline.o: cmdline.f90
-main.o: cmdline.o static_module.f90 main.f90 ../libzamaan/libzamaan.a
+static_module.o: static_module.f90 input_module.o ../libzamaan/libzamaan.a
+main.o: cmdline.o input_module.o static_module.o main.f90 ../libzamaan/libzamaan.a
