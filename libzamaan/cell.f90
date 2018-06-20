@@ -57,6 +57,7 @@ type type_cell
     procedure :: cut_ortho
     procedure :: cut_frac
     procedure :: get_neighbourlist
+    procedure :: dump_cell
 end type type_cell
 
 contains
@@ -924,5 +925,24 @@ subroutine get_neighbourlist(p)
     write(*,*) i, nneigh
   end do
 end subroutine get_neighbourlist
+
+! Dump cell info to stdout
+subroutine dump_cell(p)
+
+  ! passed variables
+  class(type_cell), intent(inout)   :: p
+
+  ! local varialbes
+  integer                           :: i, s
+
+  do i=1,3
+    write(*,'(3f16.8)') p%h(i,:)
+  end do
+  do i=1,p%nat
+    s = p%spec_int(i)
+    write(*,'(i8,i3,f8.4,3f20.12)') i, s, p%mass(s), p%r(i,:)
+  end do
+
+end subroutine dump_cell
 
 end module cell
